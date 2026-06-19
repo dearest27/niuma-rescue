@@ -1,0 +1,15 @@
+.env
+.DS_Store
+.claude/
+__pycache__/
+*.pyc
+worktrees/
+.venv/
+.dispatcher.lock
+logs/
+dist/
+scripts/windows/
+state/
+workspaces.json
+*.sqlite3
+*.sqlite3-*

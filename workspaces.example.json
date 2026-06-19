@@ -1,0 +1,11 @@
+{
+  "default": "my_project",
+  "items": {
+    "my_project": {
+      "path": "/absolute/path/to/your/repo",
+      "scm": "git",
+      "base": "origin/main",
+      "test_cmd": ""
+    }
+  }
+}

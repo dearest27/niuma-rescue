@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""部署自检：逐项检查流水线能否跑起来，缺什么明确报出来。
+  python3 doctor.py
+退出码非 0 表示有必需项未通过。
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import config as C
+import workspaces
+
+_fail = 0
+
+
+def check(cond: bool, ok_msg: str, bad_msg: str, fatal: bool = True) -> bool:
+    global _fail
+    mark = "✓" if cond else ("✗" if fatal else "!")
+    print(f"  {mark} {ok_msg if cond else bad_msg}")
+    if not cond and fatal:
+        _fail += 1
+    return cond
+
+
+def _hermes_env_has(key: str) -> bool:
+    p = Path.home() / ".hermes" / ".env"
+    return p.exists() and any(l.strip().startswith(key + "=") for l in p.read_text().splitlines())
+
+
+def main() -> None:
+    print("== 飞书凭据 ==")
+    creds = bool(os.getenv("FEISHU_APP_ID") and os.getenv("FEISHU_APP_SECRET"))
+    hermes_creds = _hermes_env_has("FEISHU_APP_ID") and _hermes_env_has("FEISHU_APP_SECRET")
+    check(creds or hermes_creds, "FEISHU_APP_ID/SECRET 就绪", "缺 FEISHU_APP_ID/SECRET（配到项目 .env）")
+
+    print("== .env 必填项 ==")
+    base, table = os.getenv("PIPELINE_BASE_TOKEN"), os.getenv("PIPELINE_TABLE_ID")
+    repo = os.getenv("PIPELINE_REPO_PATH")
+    check(bool(base and table), "BASE_TOKEN / TABLE_ID 已配", "缺 BASE_TOKEN/TABLE_ID（先跑 python3 bootstrap.py）")
+    check(bool(repo), "REPO_PATH 已配", "缺 REPO_PATH（.env 里设目标仓库）")
+
+    print("== 飞书 Base 可达 + 字段 ==")
+    if base and table:
+        try:
+            import lark
+            recs = lark.list_records()
+            check(True, f"Base 可读（{len(recs)} 条记录）", "")
+            data = lark._api("GET", f"/open-apis/bitable/v1/apps/{C.BASE_TOKEN}/tables/{C.TABLE_ID}/fields")
+            fnames = {f["field_name"] for f in data["items"]}
+            need = {C.F_TITLE, C.F_STATUS, C.F_DESC, C.F_CLARIFY, C.F_PRD,
+                    C.F_LINK, C.F_LOG, C.F_FAILS, C.F_OWNER, C.F_CHAT}
+            check(not (need - fnames), "核心字段齐全", f"缺核心字段：{need - fnames}")
+            opt = {C.F_AGENT, C.F_AGENT_CLARIFY, C.F_AGENT_CODE, C.F_AGENT_REVIEW, C.F_WORKSPACE} - fnames
+            check(not opt, "agent 选择字段齐全", f"缺可选 agent 字段（会走 fallback、日志有噪音）：{opt}", fatal=False)
+        except Exception as e:
+            check(False, "", f"Base 不可达：{e}")
+    else:
+        check(False, "", "跳过（BASE 未配）", fatal=False)
+
+    print("== 工作区 ==")
+    try:
+        items = workspaces.list_workspaces()
+        check(bool(items), f"工作区配置可读（{len(items)} 个）", "workspaces.json 无可用工作区", fatal=False)
+        for ws in items:
+            check(ws.path.exists(), f"{ws.key}: {ws.path}", f"{ws.key}: 路径不存在 {ws.path}", fatal=False)
+    except Exception as e:
+        check(False, "", f"工作区配置异常：{e}", fatal=False)
+
+    print("== 目标仓库 ==")
+    if repo:
+        p = Path(repo)
+        is_git = (p / ".git").exists()
+        check(is_git, f"{repo} 是 git 仓库", f"{repo} 不是 git 仓库")
+        if is_git:
+            r = subprocess.run(["git", "-C", repo, "ls-remote", "--heads", "origin", "main"],
+                               capture_output=True, text=True)
+            check(bool(r.stdout.strip()), "origin/main 存在",
+                  "origin/main 不存在（worktree 拉不起来）", fatal=False)
+
+    print("== Agent CLI（按当前 ENGINE_* 配置）==")
+    for eng in {C.ENGINE_CLARIFY, C.ENGINE_CODE, C.ENGINE_REVIEW}:
+        binary = C.AGENT_CMDS.get(eng, [eng])[0]
+        check(shutil.which(binary) is not None, f"{eng}（{binary}）已安装",
+              f"{eng}（{binary}）未找到（PATH 里没有）", fatal=False)
+
+    print("== GitHub gh（建 PR 用）==")
+    gh = shutil.which("gh")
+    if check(gh is not None, "gh 已安装", "gh 未安装（brew install gh）", fatal=False):
+        r = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True)
+        check(r.returncode == 0, "gh 已登录", "gh 未登录（gh auth login）", fatal=False)
+
+    print("== 入站 listener ==")
+    check((Path(__file__).resolve().parent / "listener.py").exists(),
+          "listener.py 存在", "缺 listener.py（飞书消息进不来）")
+    try:
+        import lark_oapi  # noqa: F401
+        has_lark_oapi = True
+    except ImportError:
+        has_lark_oapi = False
+    check(has_lark_oapi, "lark-oapi 已安装", "缺 lark-oapi（pip install -r requirements.txt）", fatal=False)
+
+    print()
+    if _fail:
+        sys.exit(f"✗ {_fail} 项必需检查未通过，修复后再跑。")
+    print("✓ 自检通过，可以启动 src/listener.py + src/dispatcher.py。")
+
+
+if __name__ == "__main__":
+    main()
