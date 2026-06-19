@@ -124,6 +124,7 @@ src/
 tools/
 docs/
 README.md
+LICENSE
 ```
 
 不要交付：
@@ -159,3 +160,7 @@ python tools/package_release.py 0.1.0
 ```text
 dist/agent-pipeline-v0.1.0.zip
 ```
+
+## License
+
+MIT License. See [LICENSE](LICENSE).

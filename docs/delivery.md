@@ -16,6 +16,7 @@
 
 ```text
 README.md
+LICENSE
 .env.example
 requirements.txt
 install.py
