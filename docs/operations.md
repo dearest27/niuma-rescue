@@ -57,7 +57,7 @@ python3 -B src/pipelinectl.py restart
 切换澄清Agent claude
 切换开发Agent cursor
 切换ReviewAgent gemini
-切换工作区 qtcc
+切换工作区 backend-service
 设置状态 开发中
 ```
 
@@ -74,14 +74,14 @@ python3 -B src/pipelinectl.py restart
 命令行恢复按 `record_id` 操作：
 
 ```bash
-python3 -B src/pipelinectl.py retry-run recxxx
-python3 -B src/pipelinectl.py retry-run recxxx --dispatch
-python3 -B src/pipelinectl.py clear-lock recxxx
-python3 -B src/pipelinectl.py unblock recxxx --status 开发中 --dispatch
-python3 -B src/pipelinectl.py mark-done recxxx
-python3 -B src/pipelinectl.py set-status recxxx Review中 --dispatch
-python3 -B src/pipelinectl.py set-agent recxxx cursor --stage code
-python3 -B src/pipelinectl.py set-workspace recxxx qtcc
+python3 -B src/pipelinectl.py retry-run rec_xxx
+python3 -B src/pipelinectl.py retry-run rec_xxx --dispatch
+python3 -B src/pipelinectl.py clear-lock rec_xxx
+python3 -B src/pipelinectl.py unblock rec_xxx --status 开发中 --dispatch
+python3 -B src/pipelinectl.py mark-done rec_xxx
+python3 -B src/pipelinectl.py set-status rec_xxx Review中 --dispatch
+python3 -B src/pipelinectl.py set-agent rec_xxx cursor --stage code
+python3 -B src/pipelinectl.py set-workspace rec_xxx backend-service
 ```
 
 默认恢复命令只修改状态/锁；带 `--dispatch` 时才会立即执行 `src/dispatcher.py --once`。

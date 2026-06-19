@@ -8,7 +8,7 @@
 
 - 从飞书私聊机器人收集需求，自动写入多维表格
 - 支持按需求指定 Agent：`需求@cursor：xxx`
-- 支持按需求指定工作区：`需求 #qtcc：xxx`
+- 支持按需求指定工作区：`需求 #backend-service：xxx`
 - 自动澄清需求，生成 PRD，并等待人工确认
 - 确认后自动创建/复用独立 worktree，让 Agent 开发
 - 自动运行测试或 lint 验收门
@@ -91,7 +91,7 @@ Windows：
 指定工作区：
 
 ```text
-需求@cursor #project_test_2：新增登录页文档
+需求@cursor #frontend-app：新增登录页文档
 ```
 
 支持的 Agent 名称：
@@ -117,7 +117,7 @@ cursor / claude / codex / gemini
 切换澄清Agent claude
 切换开发Agent cursor
 切换ReviewAgent gemini
-切换工作区 qtcc
+切换工作区 backend-service
 设置状态 开发中
 ```
 
@@ -137,12 +137,12 @@ python3 -B src/pipelinectl.py restart
 手动恢复：
 
 ```bash
-python3 -B src/pipelinectl.py retry-run recxxx --dispatch
-python3 -B src/pipelinectl.py clear-lock recxxx
-python3 -B src/pipelinectl.py unblock recxxx --status 开发中 --dispatch
-python3 -B src/pipelinectl.py mark-done recxxx
-python3 -B src/pipelinectl.py set-agent recxxx cursor --stage code
-python3 -B src/pipelinectl.py set-workspace recxxx qtcc
+python3 -B src/pipelinectl.py retry-run rec_xxx --dispatch
+python3 -B src/pipelinectl.py clear-lock rec_xxx
+python3 -B src/pipelinectl.py unblock rec_xxx --status 开发中 --dispatch
+python3 -B src/pipelinectl.py mark-done rec_xxx
+python3 -B src/pipelinectl.py set-agent rec_xxx cursor --stage code
+python3 -B src/pipelinectl.py set-workspace rec_xxx backend-service
 ```
 
 ## 配置

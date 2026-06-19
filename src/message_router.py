@@ -92,7 +92,7 @@ _COMMAND_HELP = """可用指令：
 设置状态 <状态>
 
 新需求格式：
-需求@cursor #project_test_2：修改登录页按钮样式"""
+需求@cursor #frontend-app：修改登录页按钮样式"""
 
 
 def _active_record(records: list[dict], chat_id: str) -> dict | None:

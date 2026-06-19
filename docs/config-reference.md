@@ -31,8 +31,8 @@ PIPELINE_REPO_PATH=/abs/path/to/repo
 每条需求可以指定目标工作区。飞书消息示例：
 
 ```text
-需求 #project_test_2：修改 README
-需求 #qtcc：调整面试通知推送方式
+需求 #frontend-app：修改 README
+需求 #backend-service：调整面试通知推送方式
 ```
 
 本机路径维护在 `workspaces.json`，交付包提供 `workspaces.example.json`。查看当前配置：
