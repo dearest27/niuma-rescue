@@ -19,7 +19,7 @@ echo "════════════════════════�
 [ -f .env ] || cp .env.example .env
 _get() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- || true; }
 _is_placeholder() {
-  case "${1:-}" in ""|"cli_xxx"|"xxx"|"app_token_xxx"|"tblxxx") return 0 ;; *) return 1 ;; esac
+  case "${1:-}" in ""|"cli_xxx"|"xxx"|"app_token_xxx"|"tblxxx"|"/abs/path/to/your/repo") return 0 ;; *) return 1 ;; esac
 }
 _set() {  # _set KEY VALUE
   grep -vE "^$1=" .env > .env.tmp 2>/dev/null || true
@@ -55,8 +55,9 @@ echo " · 目标代码仓库（agent 在这里改代码，需 git 仓库且有 o
 _ask PIPELINE_REPO_PATH "目标仓库绝对路径"
 if [ ! -f workspaces.json ]; then
   repo_path="$(_get PIPELINE_REPO_PATH)"
-  repo_name="$(basename "$repo_path")"
-  cat > workspaces.json <<JSON
+  if ! _is_placeholder "$repo_path"; then
+    repo_name="$(basename "$repo_path")"
+    cat > workspaces.json <<JSON
 {
   "default": "$repo_name",
   "items": {
@@ -69,12 +70,15 @@ if [ ! -f workspaces.json ]; then
   }
 }
 JSON
-  echo "  ✓ 已生成 workspaces.json（默认工作区：$repo_name）"
+    echo "  ✓ 已生成 workspaces.json（默认工作区：$repo_name）"
+  fi
 fi
 echo " · 各阶段默认 agent（cursor / claude / gemini / codex；可在飞书用「需求@xxx」按需覆盖）"
 _ask PIPELINE_ENGINE_CLARIFY "澄清阶段 agent" "${PIPELINE_ENGINE_CLARIFY:-cursor}"
 _ask PIPELINE_ENGINE_CODE    "开发阶段 agent" "${PIPELINE_ENGINE_CODE:-cursor}"
 _ask PIPELINE_ENGINE_REVIEW  "Review 阶段 agent" "${PIPELINE_ENGINE_REVIEW:-cursor}"
+echo " · 验收门命令（在 worktree 里跑，exit 0 通过；留空则不设门）"
+_ask PIPELINE_TEST_CMD "测试/lint 命令，如 npm run lint"
 
 # ── 3. 建飞书多维表格 ────────────────────────────────────
 echo "[4/6] 飞书多维表格"

@@ -34,7 +34,7 @@ function Get-DotEnvValue {
 
 function Test-PlaceholderValue {
     param([string]$Value)
-    return [string]::IsNullOrWhiteSpace($Value) -or $Value -in @("cli_xxx", "xxx", "app_token_xxx", "tblxxx")
+    return [string]::IsNullOrWhiteSpace($Value) -or $Value -in @("cli_xxx", "xxx", "app_token_xxx", "tblxxx", "/abs/path/to/your/repo")
 }
 
 function Set-DotEnvValue {
@@ -64,6 +64,34 @@ function Ask-DotEnv {
     if (-not [string]::IsNullOrWhiteSpace($value)) {
         Set-DotEnvValue $Key $value
     }
+}
+
+function Ensure-Workspaces {
+    if (Test-Path "workspaces.json") {
+        return
+    }
+    $repo = Get-DotEnvValue "PIPELINE_REPO_PATH"
+    if (Test-PlaceholderValue $repo) {
+        return
+    }
+    $repoName = Split-Path -Leaf $repo
+    if ([string]::IsNullOrWhiteSpace($repoName)) {
+        $repoName = "default"
+    }
+    $items = [ordered]@{}
+    $items[$repoName] = [ordered]@{
+        path = $repo
+        scm = "git"
+        base = "origin/main"
+        test_cmd = ""
+    }
+    $data = [ordered]@{
+        default = $repoName
+        items = $items
+    }
+    $json = $data | ConvertTo-Json -Depth 8
+    Set-Content "workspaces.json" -Value $json -Encoding UTF8
+    Write-Host "  ✓ 已生成 workspaces.json（默认工作区：$repoName）"
 }
 
 function Find-BasePython {
@@ -106,11 +134,14 @@ Ask-DotEnv "FEISHU_APP_SECRET" "飞书 APP_SECRET"
 
 Write-Host " · 目标代码仓库（agent 在这里改代码，需 git 仓库且有 origin/main）"
 Ask-DotEnv "PIPELINE_REPO_PATH" "目标仓库绝对路径，例如 C:\Users\you\project"
+Ensure-Workspaces
 
 Write-Host " · 各阶段默认 agent（cursor / claude / gemini / codex；可在飞书用「需求@xxx」按需覆盖）"
 Ask-DotEnv "PIPELINE_ENGINE_CLARIFY" "澄清阶段 agent" "cursor"
 Ask-DotEnv "PIPELINE_ENGINE_CODE" "开发阶段 agent" "cursor"
 Ask-DotEnv "PIPELINE_ENGINE_REVIEW" "Review 阶段 agent" "cursor"
+Write-Host " · 验收门命令（在 worktree 里跑，exit 0 通过；留空则不设门）"
+Ask-DotEnv "PIPELINE_TEST_CMD" "测试/lint 命令，如 npm run lint"
 
 # ── 3. 建飞书多维表格 ────────────────────────────────────
 Write-Host "[4/6] 飞书多维表格"
