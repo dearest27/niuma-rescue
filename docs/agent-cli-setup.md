@@ -11,6 +11,13 @@ claude: claude -p --output-format text
 codex:  codex exec -
 ```
 
+执行细节在 `src/agent_adapters.py`。新增 agent 时通常需要两步：
+
+```text
+1. 在 config.py 里加入 AGENT_CMDS 和 AGENT_ALIASES
+2. 在 src/agent_adapters.py 里加入对应 Adapter，补充认证失败、限流、空输出等错误识别
+```
+
 ## 安装要求
 
 至少安装一个你准备使用的 agent CLI，并完成登录或 API key 配置。
@@ -35,4 +42,3 @@ codex exec -
 Cursor 和 Gemini 当前已经配置了较宽的无头权限。Claude / Codex 如果要承担开发阶段，需要按你的安全策略补充无头权限参数。
 
 建议先只让一个 agent 跑通，再逐步打开更多 agent。
-

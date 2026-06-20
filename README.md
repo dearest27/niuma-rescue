@@ -162,7 +162,7 @@ PIPELINE_REPO_PATH=/abs/path/to/your/repo
 ## 打包
 
 ```bash
-python tools/package_release.py 0.1.0
+python tools/verify_release.py 0.1.0
 ```
 
 生成：

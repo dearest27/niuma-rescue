@@ -58,8 +58,7 @@ scripts/windows/
 ## 发布前验收
 
 ```bash
-bash -n install.sh
-python -B -m py_compile src/*.py install.py
+python tools/verify_release.py 0.1.0
 ```
 
 Windows 机器上再跑：

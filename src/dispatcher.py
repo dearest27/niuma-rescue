@@ -18,13 +18,13 @@ dispatcher 只在 待澄清 / 开发中 / Review中 上动作。
 测试/review 是客观裁判，不信 agent 自述；同一记录一轮只处理一次（幂等）。
 """
 import filelock          # 跨平台文件锁（替代 Unix-only 的 fcntl）
-import shutil
 import subprocess
 import sys
 import time
 import re
 from pathlib import Path
 
+import agent_adapters
 import cards
 import config as C
 import health
@@ -104,15 +104,6 @@ def build_prompt(stage: str, **kw) -> str:
     return tpl
 
 
-def _agent_env() -> dict:
-    """给 agent 子进程一个干净环境：剔除会污染引擎认证的变量（见 config 说明）。"""
-    import os
-    env = {k: v for k, v in os.environ.items()
-           if k not in C.SCRUB_ENV_KEYS
-           and not any(k.startswith(p) for p in C.SCRUB_ENV_PREFIXES)}
-    return env
-
-
 def _field_text(value) -> str:
     """把飞书字段值归一成字符串，兼容单选/多选/人员等不同返回形状。"""
     if value is None:
@@ -169,43 +160,11 @@ def resolve_agent(rec: dict, stage: str, default_engine: str) -> str:
 
 def run_agent(engine: str, prompt: str, cwd: Path, timeout: int = C.AGENT_TIMEOUT):
     """调对应引擎的 headless CLI，prompt 走 stdin。返回 (是否成功, 输出文本)。"""
-    if engine not in C.AGENT_CMDS:
-        allowed = ", ".join(sorted(C.AGENT_CMDS))
-        return False, f"unknown agent `{engine}`; allowed: {allowed}"
-    argv = list(C.AGENT_CMDS[engine])
-    exe = shutil.which(argv[0])      # Windows 上把 cursor-agent → cursor-agent.cmd/.exe
-    if exe:
-        argv[0] = exe
-    health.emit("dispatcher", "agent_start", engine=engine, cwd=str(cwd), timeout=timeout)
-    log(f"  调用 {engine}: {' '.join(argv)} (cwd={cwd}, timeout={timeout}s)…")
-    t0 = time.time()
     try:
-        p = subprocess.run(argv, cwd=str(cwd), input=prompt, text=True,
-                           capture_output=True, timeout=timeout, env=_agent_env())
-    except subprocess.TimeoutExpired:
-        health.emit("dispatcher", "agent_timeout", engine=engine, timeout=timeout)
-        log(f"  {engine} 超时（{timeout}s）")
-        return False, f"{engine} timed out after {timeout}s"
-    except FileNotFoundError:
-        health.emit("dispatcher", "agent_command_missing", engine=engine, command=argv[0])
-        log(f"  找不到命令 `{argv[0]}` —— 该引擎 CLI 没装或不在 PATH")
-        return False, f"command not found: {argv[0]}"
-    out = (p.stdout or "") + (p.stderr or "")
-    duration = time.time() - t0
-    health.emit("dispatcher", "agent_done", engine=engine, returncode=p.returncode, duration=round(duration, 1), output_len=len(out))
-    log(f"  {engine} 退出码={p.returncode}，耗时 {duration:.0f}s，输出 {len(out)} 字")
-    # 注意：claude -p 等 CLI 在认证失败时仍可能返回退出码 0，所以光看 returncode 不够。
-    # 这里再做两道防线：输出为空、或命中已知错误特征，都判为失败。
-    # TODO: 更稳的做法是各引擎用结构化输出（claude --output-format json 看 is_error）。
-    err_markers = ("Invalid authentication", "Failed to authenticate",
-                   "API Error", "401", "rate limit", "quota")
-    if p.returncode != 0:
-        return False, out
-    if not out.strip():
-        return False, f"{engine} 返回空输出"
-    if any(m in out for m in err_markers):
-        return False, f"{engine} 输出疑似错误: {out[:300]}"
-    return True, out
+        result = agent_adapters.run_agent(engine, prompt, cwd, timeout, log=log)
+    except ValueError as exc:
+        return False, str(exc)
+    return result.ok, result.output
 
 
 def git(*args, cwd=None, check=True):
