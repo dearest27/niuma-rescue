@@ -30,6 +30,7 @@ import config as C
 import health
 import lark
 import review_utils
+from routing_utils import review_verdict, route_clarify
 import runs
 import scm
 import workspaces
@@ -200,32 +201,6 @@ def write_dossier(wt: Path, req_id: str, fields: dict) -> Path:
 
 
 # ── 阶段处理器 ───────────────────────────────────────────────────────
-def route_clarify(out: str) -> tuple[str, str]:
-    """从 clarify 输出里稳健识别契约标记，容忍 agent 在 CLEAR/QUESTIONS 前多写少量前言。
-    在前几行里找以 CLEAR/QUESTIONS 开头的行，命中即按它路由、其后为载荷；
-    都没命中 → 当 QUESTIONS（保守交人工）。返回 (verdict, payload)。"""
-    lines = out.strip().splitlines()
-    for i, ln in enumerate(lines[:6]):
-        t = ln.strip().upper()
-        if t.startswith("CLEAR"):
-            return "CLEAR", "\n".join(lines[i + 1:]).strip()
-        if t.startswith("QUESTIONS"):
-            return "QUESTIONS", "\n".join(lines[i + 1:]).strip()
-    return "QUESTIONS", out.strip()
-
-
-def review_verdict(out: str) -> str:
-    """稳健识别 review 的 PASS/FAIL（容忍前面有少量前言行）。取前几行里最先出现的
-    PASS/FAIL 标记；都没命中 → FAIL（保守，不放行未明确通过的改动）。"""
-    for ln in out.strip().splitlines()[:6]:
-        t = ln.strip().upper()
-        if t.startswith("PASS"):
-            return "PASS"
-        if t.startswith("FAIL"):
-            return "FAIL"
-    return "FAIL"
-
-
 def handle_clarify(rec: dict) -> None:
     f = rec["fields"]
     ws = workspace_for(rec)
