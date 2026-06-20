@@ -9,6 +9,7 @@ import config as C
 
 
 TEMPLATE_STATUS = {
+    C.S_SETUP: "turquoise",
     C.S_CLARIFY: "wathet",
     C.S_ANSWER: "yellow",
     C.S_CONFIRM: "blue",
@@ -20,24 +21,24 @@ TEMPLATE_STATUS = {
 }
 
 STATUS_EMOJI = {
-    C.S_CLARIFY: "🔍", C.S_ANSWER: "💬", C.S_CONFIRM: "📋",
+    C.S_SETUP: "🎛", C.S_CLARIFY: "🔍", C.S_ANSWER: "💬", C.S_CONFIRM: "📋",
     C.S_DEV: "🔧", C.S_REVIEW: "🔎", C.S_MERGE: "🚀",
     C.S_DONE: "✔️", C.S_BLOCKED: "🚫",
 }
 
 # 看板排序：需要你处理的（阻塞 / 待确认 / 待合并 / 待回答）排前面，机器在跑的靠后。
 _BOARD_ORDER = {
-    C.S_BLOCKED: 0, C.S_CONFIRM: 1, C.S_MERGE: 2, C.S_ANSWER: 3,
-    C.S_CLARIFY: 4, C.S_DEV: 5, C.S_REVIEW: 6,
+    C.S_BLOCKED: 0, C.S_SETUP: 1, C.S_CONFIRM: 2, C.S_MERGE: 3, C.S_ANSWER: 4,
+    C.S_CLARIFY: 5, C.S_DEV: 6, C.S_REVIEW: 7,
 }
 
 
-def _button(text: str, action: str, record_id: str, btn_type: str = "primary") -> dict:
+def _button(text: str, action: str, record_id: str, btn_type: str = "primary", **extra) -> dict:
     return {
         "tag": "button",
         "text": {"tag": "plain_text", "content": text},
         "type": btn_type,
-        "value": {"record_id": record_id, "action": action},
+        "value": {"record_id": record_id, "action": action, **extra},
     }
 
 
@@ -198,8 +199,11 @@ def confirm_card(rec: dict) -> dict:
             ),
             _md(_trunc(f.get(C.F_PRD) or "（无 PRD）")),
             {"tag": "hr"},
-            _md("确认后会进入开发；如果要补充或修改，直接回复文字即可。"),
-            _action_row([_button("确认开发", "confirm", rid)]),
+            _md("确认后会进入开发；想换开发 Agent / 工作区就点「⚙️ 配置」，要补充改需求直接回文字。"),
+            _action_row([
+                _button("确认开发", "confirm", rid),
+                _button("⚙️ 配置 Agent/工作区", "open_settings", rid, "default"),
+            ]),
         ],
     }
 
@@ -329,6 +333,62 @@ def board_card(records: list[dict]) -> dict:
     return {
         "config": {"wide_screen_mode": True},
         "header": _header(f"需求看板 · {len(flight)} 条在途", template="blue"),
+        "elements": elements,
+    }
+
+
+AGENT_CHOICES = ["claude", "codex", "gemini", "cursor"]
+
+
+def _settings_hint(status: str | None) -> str:
+    """提示在当前状态下改 Agent/工作区到底会不会生效——这是"设置了不生效"的根源。"""
+    if status == C.S_SETUP:
+        return "✅ 选好澄清 Agent 和工作区后，点「🚀 开始澄清」即用所选配置在对应工作区澄清。"
+    if status in (C.S_DEV, C.S_REVIEW, C.S_MERGE):
+        return ("⚠️ 已进入开发/Review：切换工作区**不会迁移**已建好的工作区，"
+                "改 Agent 仅对之后阶段生效。要换工作区重做，建议先「重新澄清」。")
+    if status == C.S_BLOCKED:
+        return "提示：当前已阻塞；改完 Agent/工作区后用「解除阻塞」回到对应阶段才会生效。"
+    if status in (C.S_CLARIFY, C.S_ANSWER, C.S_CONFIRM):
+        return "✅ 现在设置最稳妥：开发尚未开始，选择会在后续阶段生效。"
+    return ""
+
+
+def settings_card(rec: dict, workspace_keys: list[str] | None = None) -> dict:
+    """交互式配置卡片：点按选择执行 Agent / 工作区，点完原地刷新；待确认时附带「确认开发」。"""
+    f = _record_fields(rec)
+    rid = rec.get("record_id", "")
+    status = f.get(C.F_STATUS)
+    cur_agent = f.get(C.F_AGENT) or "默认"
+    cur_ws = f.get(C.F_WORKSPACE) or "默认"
+    elements: list[dict] = [
+        _fields(("状态", status or "-"), ("当前 Agent", cur_agent), ("当前工作区", cur_ws)),
+        _md("**执行 Agent**（点按即生效，对该需求所有阶段生效）"),
+        _action_row([
+            _button(a, "set_agent", rid, "primary" if a == cur_agent else "default", agent=a)
+            for a in AGENT_CHOICES
+        ]),
+    ]
+    keys = workspace_keys or []
+    if keys:
+        elements.append(_md("**工作区**"))
+        elements.append(_action_row([
+            _button(k, "set_workspace", rid, "primary" if k == cur_ws else "default", workspace=k)
+            for k in keys[:9]
+        ]))
+    hint = _settings_hint(status)
+    if hint:
+        elements.append(_md(f"<font color='grey'>{hint}</font>"))
+    if status == C.S_SETUP:
+        elements.append({"tag": "hr"})
+        elements.append(_action_row([_button("🚀 开始澄清", "start_clarify", rid)]))
+    elif status == C.S_CONFIRM:
+        elements.append({"tag": "hr"})
+        elements.append(_action_row([_button("✅ 确认开发", "confirm", rid)]))
+    title_prefix = "新需求 · 选择澄清配置" if status == C.S_SETUP else "配置"
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": _header(f"{title_prefix}：{_title(rec)}", status),
         "elements": elements,
     }
 

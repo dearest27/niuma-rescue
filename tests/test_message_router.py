@@ -70,15 +70,16 @@ class MessageRouterTest(unittest.TestCase):
             "content": "需求@cursor #backend-service：修复登录按钮",
         })
 
-        self.assertTrue(handled)
+        # 新流程：落在「待选择」人工卡点，不立刻 dispatch（返回 False），等人点「开始澄清」
+        self.assertFalse(handled)
         self.assertEqual(len(fake.created), 1)
         fields = fake.created[0]
-        self.assertEqual(fields[C.F_STATUS], C.S_CLARIFY)
-        self.assertEqual(fields[C.F_AGENT_CLARIFY], "cursor")
+        self.assertEqual(fields[C.F_STATUS], C.S_SETUP)
+        self.assertEqual(fields[C.F_AGENT], "cursor")        # 内联 @agent 预选到执行Agent
         self.assertEqual(fields[C.F_WORKSPACE], "backend-service")
         self.assertEqual(fields[C.F_DESC], "修复登录按钮")
         self.assertEqual(len(fake.cards), 1)
-        self.assertIn("需求已进入流水线", fake.cards[0][1]["header"]["title"]["content"])
+        self.assertIn("选择澄清配置", fake.cards[0][1]["header"]["title"]["content"])
 
         duplicate = message_router.handle_message({
             "message_type": "text",
@@ -90,6 +91,40 @@ class MessageRouterTest(unittest.TestCase):
         self.assertFalse(duplicate)
         self.assertEqual(len(fake.created), 1)
         self.assertEqual(len(fake.cards), 1)
+
+    def test_start_clarify_button_moves_setup_to_clarify(self) -> None:
+        fake = FakeLark([{"record_id": "rec_1", "fields": {
+            C.F_CHAT: "oc_1", C.F_STATUS: C.S_SETUP, C.F_TITLE: "需求X", C.F_AGENT: "cursor"}}])
+        message_router.lark = fake
+
+        toast, dispatch, _card = message_router.handle_card_action(
+            {"record_id": "rec_1", "action": "start_clarify"})
+
+        self.assertTrue(dispatch)            # 触发 dispatcher 跑澄清
+        self.assertIn("开始澄清", toast)
+        self.assertEqual(fake.records[0]["fields"][C.F_STATUS], C.S_CLARIFY)
+
+    def test_start_clarify_rejected_when_not_setup(self) -> None:
+        fake = FakeLark([{"record_id": "rec_1", "fields": {
+            C.F_CHAT: "oc_1", C.F_STATUS: C.S_DEV, C.F_TITLE: "需求X"}}])
+        message_router.lark = fake
+
+        toast, dispatch, _card = message_router.handle_card_action(
+            {"record_id": "rec_1", "action": "start_clarify"})
+
+        self.assertFalse(dispatch)
+        self.assertEqual(fake.records[0]["fields"][C.F_STATUS], C.S_DEV)  # 未改动
+
+    def test_start_clarify_text_fallback(self) -> None:
+        fake = FakeLark([{"record_id": "rec_1", "fields": {
+            C.F_CHAT: "oc_1", C.F_STATUS: C.S_SETUP, C.F_TITLE: "需求X"}}])
+        message_router.lark = fake
+
+        handled = message_router.handle_message({
+            "message_type": "text", "chat_id": "oc_1", "sender_id": "ou_1", "content": "开始澄清"})
+
+        self.assertTrue(handled)
+        self.assertEqual(fake.records[0]["fields"][C.F_STATUS], C.S_CLARIFY)
 
     def test_status_command_sends_status_card(self) -> None:
         fake = FakeLark([

@@ -130,5 +130,39 @@ class BlockedAndStatusLogTest(unittest.TestCase):
         self.assertIn("最近一条日志在这", joined)
 
 
+class SettingsCardTest(unittest.TestCase):
+    def _btns(self, card: dict) -> list[dict]:
+        return [a for e in card["elements"] if e.get("tag") == "action" for a in e["actions"]]
+
+    def test_buttons_carry_agent_and_workspace_choice(self) -> None:
+        card = cards.settings_card(board_rec("rc", C.S_CONFIRM, "待确认的"), ["wsA", "wsB"])
+        btns = self._btns(card)
+        agents = {b["value"]["agent"] for b in btns if b["value"]["action"] == "set_agent"}
+        self.assertEqual(agents, set(cards.AGENT_CHOICES))
+        wss = {b["value"]["workspace"] for b in btns if b["value"]["action"] == "set_workspace"}
+        self.assertEqual(wss, {"wsA", "wsB"})
+
+    def test_confirm_status_includes_confirm_button(self) -> None:
+        btns = self._btns(cards.settings_card(board_rec("rc", C.S_CONFIRM, "x"), []))
+        self.assertTrue(any(b["value"]["action"] == "confirm" for b in btns))
+
+    def test_current_agent_is_highlighted(self) -> None:
+        r = board_rec("rc", C.S_DEV, "x")
+        r["fields"][C.F_AGENT] = "cursor"
+        btns = [b for b in self._btns(cards.settings_card(r, [])) if b["value"].get("action") == "set_agent"]
+        cursor_btn = next(b for b in btns if b["value"]["agent"] == "cursor")
+        self.assertEqual(cursor_btn["type"], "primary")
+
+    def test_dev_status_warns_workspace_wont_migrate(self) -> None:
+        card = cards.settings_card(board_rec("rc", C.S_DEV, "x"), ["wsA"])
+        joined = "\n".join(e.get("text", {}).get("content", "") for e in card["elements"] if e.get("tag") == "div")
+        self.assertIn("不会迁移", joined)
+
+    def test_confirm_card_exposes_open_settings(self) -> None:
+        btns = [a for e in cards.confirm_card(rec(C.S_CONFIRM))["elements"]
+                if e.get("tag") == "action" for a in e["actions"]]
+        self.assertTrue(any(b["value"]["action"] == "open_settings" for b in btns))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,13 @@ import ops
 import workspaces
 
 
+def _ws_keys() -> list[str]:
+    try:
+        return [w.key for w in workspaces.list_workspaces()]
+    except Exception:
+        return []
+
+
 def handle_card_action(value: dict) -> tuple[str, bool, dict | None]:
     """处理卡片按钮点击。返回 (toast 文案, 是否触发 dispatch, 用于替换原卡片的新卡片或 None)。"""
     rid = (value or {}).get("record_id")
@@ -34,6 +41,28 @@ def handle_card_action(value: dict) -> tuple[str, bool, dict | None]:
         lark.update(rid, {C.F_STATUS: C.S_DONE})
         return ("✅ 已标记完成", False,
                 cards.done_toast_card(f"✅ 已完成：{title}", "需求已收尾。", "green"))
+    if action == "start_clarify":
+        if status != C.S_SETUP:
+            return f"当前状态「{status}」，无需开始澄清", False, None
+        lark.update(rid, {C.F_STATUS: C.S_CLARIFY})
+        agent = f.get(C.F_AGENT) or C.ENGINE_CLARIFY
+        ws = f.get(C.F_WORKSPACE) or "默认"
+        return ("🚀 开始澄清", True,
+                cards.done_toast_card(f"🚀 开始澄清：{title}",
+                                      f"将用 {agent} 在工作区 {ws} 澄清，请稍候。", "wathet"))
+    if action == "open_settings":
+        return "打开配置", False, cards.settings_card(rec, _ws_keys())
+    if action == "set_agent":
+        res = ops.set_agent(rec, (value or {}).get("agent", ""))
+        return res.message, False, cards.settings_card(rec, _ws_keys())
+    if action == "set_workspace":
+        key = (value or {}).get("workspace", "")
+        try:
+            workspaces.get(key)
+        except Exception as exc:
+            return f"工作区无效：{exc}", False, None
+        res = ops.set_workspace(rec, key)
+        return res.message, False, cards.settings_card(rec, _ws_keys())
     manual_actions = {
         "retry": lambda: ops.retry_record(rec),
         "clear_lock": lambda: ops.clear_lock(rec),
@@ -96,6 +125,7 @@ def append_clarify(rec: dict, answer: str) -> None:
 _COMMAND_HELP = """可用指令：
 看板（所有在途需求一览）
 状态（当前会话的需求）
+配置（点按选择 Agent / 工作区）
 统计 / 周报（运行报表）
 诊断（当前需求）
 重试
@@ -111,7 +141,10 @@ _COMMAND_HELP = """可用指令：
 设置状态 <状态>
 
 新需求格式：
-需求@cursor #frontend-app：修改登录页按钮样式"""
+需求：修改登录页按钮样式
+  发完会先停在「待选择」，弹卡片让你选澄清 Agent + 工作区，点「开始澄清」才开跑。
+  也可内联预选：需求@cursor #frontend-app：…（仍会弹卡片，已帮你选好，直接点开始）
+  选好后也可直接回「开始澄清」。"""
 
 
 def _active_record(records: list[dict], chat_id: str) -> dict | None:
@@ -119,7 +152,7 @@ def _active_record(records: list[dict], chat_id: str) -> dict | None:
         records,
         chat_id,
         {
-            C.S_CLARIFY, C.S_ANSWER, C.S_CONFIRM, C.S_DEV,
+            C.S_SETUP, C.S_CLARIFY, C.S_ANSWER, C.S_CONFIRM, C.S_DEV,
             C.S_REVIEW, C.S_MERGE, C.S_BLOCKED,
         },
     )
@@ -167,6 +200,21 @@ def handle_command(text: str, chat_id: str, records: list[dict]) -> bool | None:
         return False
     if normalized in {"看板", "全部", "board", "/board"}:
         _send_card_or_text(chat_id, cards.board_card(records), cards.board_text(records))
+        return False
+    if normalized in {"开始澄清", "开始", "go"}:
+        rec = find_record(records, chat_id, {C.S_SETUP})
+        if not rec:
+            return None  # 不在待选择语境 → 交给后续（可能是别的输入）
+        lark.update(rec["record_id"], {C.F_STATUS: C.S_CLARIFY})
+        lark.send_text(chat_id, "🚀 开始澄清。")
+        return True
+    if normalized in {"配置", "config", "/config"}:
+        rec = _active_record(records, chat_id)
+        if not rec:
+            lark.send_text(chat_id, "当前会话没有进行中的需求。")
+            return False
+        _send_card_or_text(chat_id, cards.settings_card(rec, _ws_keys()),
+                           "回复『切换Agent cursor』或『切换工作区 <key>』来设置。")
         return False
     if normalized in {"统计", "报表", "stats"}:
         lark.send_text(chat_id, health.summary_text(24))
@@ -327,26 +375,22 @@ def handle_message(msg: dict) -> bool:
         fields = {
             C.F_TITLE: body[:30],
             C.F_DESC: body,
-            C.F_STATUS: C.S_CLARIFY,                 # → 待澄清
+            C.F_STATUS: C.S_SETUP,                   # → 待选择：先让人选澄清 Agent + 工作区
             C.F_CHAT: chat_id,
             C.F_OWNER: [{"id": sender}] if sender else None,
         }
         if workspace_key:
             fields[C.F_WORKSPACE] = workspace_key
-        created = _create_requirement(fields, clarify_agent)
-        suffix_parts = []
-        if clarify_agent:
-            suffix_parts.append(f"澄清 Agent：{clarify_agent}")
-        if workspace_key:
-            suffix_parts.append(f"工作区：{workspace_key}")
-        suffix = "（" + "，".join(suffix_parts) + "）" if suffix_parts else ""
-        card_fields = created.get("fields", fields) if isinstance(created, dict) else fields
+        if clarify_agent:                            # 内联 @agent 作为预选（执行Agent=全阶段默认）
+            fields[C.F_AGENT] = clarify_agent
+        created = lark.create(fields)
+        rec = {"record_id": created["record_id"], "fields": created.get("fields", fields)}
         _send_card_or_text(
             chat_id,
-            cards.intake_card(card_fields),
-            f"需求已收到{suffix}，我先澄清一下细节，稍等。",
+            cards.settings_card(rec, _ws_keys()),
+            "需求已收到。回复『切换Agent <名>』『切换工作区 <key>』选好后回『开始澄清』。",
         )
-        return True
+        return False                                 # 等人点「开始澄清」，先不跑 dispatcher
 
     lark.send_text(chat_id, "发「需求：<一句话描述>」给我，就能提交一个新需求开始走流水线。")
     return False

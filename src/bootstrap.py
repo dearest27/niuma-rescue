@@ -21,7 +21,7 @@ _ENV = Path(__file__).resolve().parent / ".env"
 
 # 字段 schema：(字段名, 飞书字段 type, property)
 # type: 1=多行文本 2=数字 3=单选 11=人员 1002=最后更新时间
-_STATUS_OPTIONS = [C.S_CLARIFY, C.S_ANSWER, C.S_CONFIRM, C.S_DEV,
+_STATUS_OPTIONS = [C.S_SETUP, C.S_CLARIFY, C.S_ANSWER, C.S_CONFIRM, C.S_DEV,
                    C.S_REVIEW, C.S_MERGE, C.S_DONE, C.S_BLOCKED]
 _FIELDS = [
     (C.F_STATUS, 3, {"options": [{"name": s} for s in _STATUS_OPTIONS]}),

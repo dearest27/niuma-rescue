@@ -110,6 +110,7 @@ F_AGENT_CODE    = _FIELDS["agent_code"]  # 可选：覆盖开发阶段 agent
 F_AGENT_REVIEW  = _FIELDS["agent_review"]  # 可选：覆盖 Review 阶段 agent
 
 # ── 状态值（单选选项）────────────────────────────────────────────────
+S_SETUP   = "待选择"     # 新需求落地后先让人选澄清 Agent + 工作区（dispatcher 不碰）
 S_CLARIFY = "待澄清"
 S_ANSWER  = "待回答"     # 等人回答（dispatcher 不碰）
 S_CONFIRM = "待确认"     # 等人确认 PRD（dispatcher 不碰）
@@ -127,6 +128,7 @@ HUMAN_INPUT = {S_ANSWER, S_CONFIRM}
 
 # dispatcher 允许自动推进的状态边。人工可在飞书里改状态，但 dispatcher 自己只走这些边。
 VALID_TRANSITIONS = {
+    S_SETUP: {S_CLARIFY},
     S_CLARIFY: {S_ANSWER, S_CONFIRM, S_BLOCKED},
     S_DEV: {S_REVIEW, S_BLOCKED},
     S_REVIEW: {S_DEV, S_MERGE, S_BLOCKED},
