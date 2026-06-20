@@ -1,6 +1,8 @@
 .env
 .DS_Store
 .idea/
+agents.json
+fields.json
 .claude/
 __pycache__/
 *.pyc

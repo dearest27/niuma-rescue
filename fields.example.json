@@ -1,0 +1,17 @@
+{
+  "title": "需求标题",
+  "status": "状态",
+  "description": "需求描述",
+  "clarify": "澄清记录",
+  "prd": "PRD",
+  "link": "分支PR链接",
+  "log": "执行日志",
+  "fails": "失败次数",
+  "owner": "提需求人",
+  "chat": "会话ID",
+  "workspace": "工作区",
+  "agent": "执行Agent",
+  "agent_clarify": "澄清Agent",
+  "agent_code": "开发Agent",
+  "agent_review": "ReviewAgent"
+}

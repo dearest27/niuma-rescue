@@ -1,6 +1,13 @@
 # 配置说明
 
-配置文件是项目根目录 `.env`，可从 `.env.example` 复制。
+配置采用分层文件，默认值可直接跑，迁移到别人机器时按需复制 example 文件：
+
+- `.env`：飞书凭据、Base token、默认仓库、运行策略等部署值。
+- `fields.json`：飞书 Base 字段名映射，默认读取内置字段名。
+- `workspaces.json`：代码工作区、Git/GitLab/SVN 配置。
+- `agents.json`：默认 agent、CLI 命令模板、别名。
+
+`.env` 可从 `.env.example` 复制；其他配置可从 `*.example.json` 复制。
 
 ## 必填项
 
@@ -44,6 +51,44 @@ python3 -B src/pipelinectl.py workspaces
 ```
 
 优先级：Base 记录 `工作区` > 消息 `#workspace` 写入的字段 > `workspaces.json.default` > `PIPELINE_REPO_PATH`。
+
+## 飞书字段映射
+
+默认字段名与 `bootstrap.py` 创建的 Base 保持一致。如果你接入的是已有 Base，字段名不完全一样，复制一份：
+
+```bash
+cp fields.example.json fields.json
+```
+
+然后按你的 Base 列名修改右侧值：
+
+```json
+{
+  "title": "需求标题",
+  "status": "状态",
+  "description": "需求描述",
+  "clarify": "澄清记录",
+  "prd": "PRD",
+  "link": "分支PR链接",
+  "log": "执行日志",
+  "fails": "失败次数",
+  "owner": "提需求人",
+  "chat": "会话ID",
+  "workspace": "工作区",
+  "agent": "执行Agent",
+  "agent_clarify": "澄清Agent",
+  "agent_code": "开发Agent",
+  "agent_review": "ReviewAgent"
+}
+```
+
+也可以通过 `.env` 指定路径：
+
+```text
+PIPELINE_FIELDS_FILE=/abs/path/to/fields.json
+```
+
+字段左侧 key 是流水线内部语义，不要改；右侧 value 是飞书 Base 里的真实列名。
 
 ## 发布 / Review
 
@@ -106,6 +151,34 @@ PIPELINE_ENGINE_REVIEW=gemini
 ```
 
 飞书里可以用 `需求@cursor：xxx` 覆盖澄清阶段 agent。表格字段 `执行Agent` 可作为记录级默认值，`澄清Agent/开发Agent/ReviewAgent` 可分别覆盖阶段。
+
+默认 agent 和 CLI 命令也可以集中放到 `agents.json`：
+
+```bash
+cp agents.example.json agents.json
+```
+
+示例：
+
+```json
+{
+  "defaults": {
+    "clarify": "claude",
+    "code": "cursor",
+    "review": "gemini"
+  },
+  "commands": {
+    "cursor": ["cursor-agent", "--print", "--force", "--trust", "--output-format", "text"]
+  },
+  "aliases": {
+    "Cursor Agent": "cursor"
+  }
+}
+```
+
+优先级：`.env` 里的 `PIPELINE_ENGINE_*` > `agents.json.defaults` > 内置默认。
+命令模板优先级：`agents.json.commands` 覆盖内置 `AGENT_CMDS`。
+别名优先级：`agents.json.aliases` 覆盖/补充内置别名。
 
 ## 轮询
 

@@ -85,6 +85,11 @@ def main() -> None:
     check(bool(base and table), "BASE_TOKEN / TABLE_ID 已配", "缺 BASE_TOKEN/TABLE_ID（先跑 python3 bootstrap.py）")
     check(bool(repo), "REPO_PATH 已配", "缺 REPO_PATH（.env 里设目标仓库）")
 
+    print("== 配置文件 ==")
+    check(True, f"fields: {C.FIELDS_FILE}（{'custom' if C.FIELDS_FILE.exists() else '默认字段'}）", "")
+    check(C.WORKSPACES_FILE.exists(), f"workspaces: {C.WORKSPACES_FILE}", f"workspaces 文件不存在：{C.WORKSPACES_FILE}", fatal=False)
+    check(True, f"agents: {C.AGENTS_FILE}（{'custom' if C.AGENTS_FILE.exists() else '默认命令'}）", "")
+
     print("== 飞书 Base 可达 + 字段 ==")
     if base and table:
         try:

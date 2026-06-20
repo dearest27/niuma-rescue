@@ -51,6 +51,8 @@ def local_checks(smoke: Smoke) -> None:
     smoke.check((SRC / "listener.py").exists(), "listener.py exists", "listener.py missing")
     smoke.check((SRC / "dispatcher.py").exists(), "dispatcher.py exists", "dispatcher.py missing")
     smoke.check((ROOT / "workspaces.example.json").exists(), "workspaces.example.json exists", "workspaces.example.json missing")
+    smoke.check((ROOT / "fields.example.json").exists(), "fields.example.json exists", "fields.example.json missing")
+    smoke.check((ROOT / "agents.example.json").exists(), "agents.example.json exists", "agents.example.json missing")
 
     try:
         import config as C

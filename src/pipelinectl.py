@@ -115,6 +115,13 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
         ("PIPELINE_REPO_PATH", bool(os.getenv("PIPELINE_REPO_PATH"))),
     ):
         print(f"  {_mark(value)} {key}")
+    for key, path in (
+        ("fields", C.FIELDS_FILE),
+        ("workspaces", C.WORKSPACES_FILE),
+        ("agents", C.AGENTS_FILE),
+    ):
+        status = "custom" if path.exists() else "default"
+        print(f"  OK {key}_file: {path} ({status})")
     print()
 
     print("services:")

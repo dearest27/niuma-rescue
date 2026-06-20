@@ -1,9 +1,14 @@
 """中央配置：飞书 Base 标识、字段/状态常量、调度策略、各阶段引擎。
 
 部署相关的值（Base 标识、目标仓库、测试命令、轮询间隔、默认引擎）从环境变量
-或同目录 .env 读取——见 .env.example。其余是系统契约（字段名 / 状态 / 引擎命令），
-保持为常量。dispatcher.py / lark.py / message_router.py 只引用本模块。
+或同目录 .env 读取——见 .env.example。
+
+可迁移配置分层：
+  - fields.json：不同飞书 Base 的字段名映射
+  - workspaces.json：不同代码工作区 / SCM
+  - agents.json：默认 agent、命令模板、别名
 """
+import json
 import os
 import re
 from pathlib import Path
@@ -29,6 +34,25 @@ def _load_dotenv(path: Path) -> None:
 _load_dotenv(_ROOT / ".env")
 
 
+def _load_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise SystemExit(f"读取配置文件失败：{path}，{exc}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"配置文件必须是 JSON object：{path}")
+    return data
+
+
+def _env_path(name: str, default: Path) -> Path:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return Path(value.strip())
+
+
 def validate() -> None:
     """dispatcher 启动时调用：必填项缺失就报错退出。首次部署请先跑 bootstrap.py 建表。"""
     missing = [k for k in ("PIPELINE_BASE_TOKEN", "PIPELINE_TABLE_ID", "PIPELINE_REPO_PATH")
@@ -44,22 +68,46 @@ def validate() -> None:
 BASE_TOKEN = os.getenv("PIPELINE_BASE_TOKEN", "")
 TABLE_ID   = os.getenv("PIPELINE_TABLE_ID", "")
 
+# ── 可迁移配置文件路径 ───────────────────────────────────────────────
+FIELDS_FILE = _env_path("PIPELINE_FIELDS_FILE", _ROOT / "fields.json")
+WORKSPACES_FILE = _env_path("PIPELINE_WORKSPACES_FILE", _ROOT / "workspaces.json")
+AGENTS_FILE = _env_path("PIPELINE_AGENTS_FILE", _ROOT / "agents.json")
+
 # ── 字段名（系统契约，必须和 Base 列名完全一致）──────────────────────
-F_TITLE   = "需求标题"
-F_STATUS  = "状态"
-F_DESC    = "需求描述"
-F_CLARIFY = "澄清记录"
-F_PRD     = "PRD"
-F_LINK    = "分支PR链接"
-F_LOG     = "执行日志"
-F_FAILS   = "失败次数"
-F_OWNER   = "提需求人"
-F_CHAT    = "会话ID"      # 飞书会话 chat_id，入站消息靠它关联到需求记录
-F_WORKSPACE = "工作区"     # 可选：需求级工作区 key，对应 workspaces.json
-F_AGENT   = "执行Agent"   # 可选：claude/codex/gemini/cursor，作为各阶段默认 agent
-F_AGENT_CLARIFY = "澄清Agent"  # 可选：覆盖澄清阶段 agent
-F_AGENT_CODE    = "开发Agent"  # 可选：覆盖开发阶段 agent
-F_AGENT_REVIEW  = "ReviewAgent"  # 可选：覆盖 Review 阶段 agent
+_FIELD_DEFAULTS = {
+    "title": "需求标题",
+    "status": "状态",
+    "description": "需求描述",
+    "clarify": "澄清记录",
+    "prd": "PRD",
+    "link": "分支PR链接",
+    "log": "执行日志",
+    "fails": "失败次数",
+    "owner": "提需求人",
+    "chat": "会话ID",
+    "workspace": "工作区",
+    "agent": "执行Agent",
+    "agent_clarify": "澄清Agent",
+    "agent_code": "开发Agent",
+    "agent_review": "ReviewAgent",
+}
+_FIELDS = {**_FIELD_DEFAULTS, **{k: v for k, v in _load_json(FIELDS_FILE).items() if isinstance(v, str) and v.strip()}}
+
+F_TITLE   = _FIELDS["title"]
+F_STATUS  = _FIELDS["status"]
+F_DESC    = _FIELDS["description"]
+F_CLARIFY = _FIELDS["clarify"]
+F_PRD     = _FIELDS["prd"]
+F_LINK    = _FIELDS["link"]
+F_LOG     = _FIELDS["log"]
+F_FAILS   = _FIELDS["fails"]
+F_OWNER   = _FIELDS["owner"]
+F_CHAT    = _FIELDS["chat"]      # 飞书会话 chat_id，入站消息靠它关联到需求记录
+F_WORKSPACE = _FIELDS["workspace"]     # 可选：需求级工作区 key，对应 workspaces.json
+F_AGENT   = _FIELDS["agent"]   # 可选：claude/codex/gemini/cursor，作为各阶段默认 agent
+F_AGENT_CLARIFY = _FIELDS["agent_clarify"]  # 可选：覆盖澄清阶段 agent
+F_AGENT_CODE    = _FIELDS["agent_code"]  # 可选：覆盖开发阶段 agent
+F_AGENT_REVIEW  = _FIELDS["agent_review"]  # 可选：覆盖 Review 阶段 agent
 
 # ── 状态值（单选选项）────────────────────────────────────────────────
 S_CLARIFY = "待澄清"
@@ -91,7 +139,6 @@ EVENT_KEY = "im.message.receive_v1"
 
 # ── 执行环境（部署相关 · 来自 .env）─────────────────────────────────
 REPO_PATH     = Path(os.getenv("PIPELINE_REPO_PATH", ""))   # 默认代码仓库；需求级工作区优先
-WORKSPACES_FILE = Path(os.getenv("PIPELINE_WORKSPACES_FILE", str(_ROOT / "workspaces.json")))
 BASE_REF      = os.getenv("PIPELINE_BASE_REF", "origin/main")
 WORKTREE_BASE = Path(os.getenv("PIPELINE_WORKTREE_BASE", str(_ROOT / "worktrees")))
 DOSSIER_DIR   = ".pipeline"                              # 需求档案目录，建在每个 worktree/分支内
@@ -104,6 +151,13 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if value is None or value.strip() == "":
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_text(name: str, default: str) -> str:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip()
 
 
 # Push/PR 是 SCM 平台能力，不是流水线核心能力。GitLab/SVN/本地验证场景可关闭。
@@ -139,13 +193,16 @@ PROGRESS_INTERVAL = int(os.getenv("PIPELINE_PROGRESS_INTERVAL", "20"))
 EXECUTION_STALE_AFTER = int(os.getenv("PIPELINE_EXECUTION_STALE_AFTER", str(AGENT_TIMEOUT + 600)))  # 认领多久算 stale（可被别人接管）
 RETRY_BASE_DELAY = int(os.getenv("PIPELINE_RETRY_BASE_DELAY", "60"))  # 失败后退避秒数基数
 
-# ── 各阶段默认引擎（.env 可覆盖；记录级 *Agent 字段优先级更高）────────
-ENGINE_CLARIFY = os.getenv("PIPELINE_ENGINE_CLARIFY", "claude")
-ENGINE_CODE    = os.getenv("PIPELINE_ENGINE_CODE", "cursor")
-ENGINE_REVIEW  = os.getenv("PIPELINE_ENGINE_REVIEW", "gemini")
+_AGENTS = _load_json(AGENTS_FILE)
+_AGENT_DEFAULTS = _AGENTS.get("defaults", {}) if isinstance(_AGENTS.get("defaults"), dict) else {}
+
+# ── 各阶段默认引擎（.env > agents.json > 内置默认；记录级 *Agent 字段优先级更高）────────
+ENGINE_CLARIFY = _env_text("PIPELINE_ENGINE_CLARIFY", str(_AGENT_DEFAULTS.get("clarify", "claude")))
+ENGINE_CODE    = _env_text("PIPELINE_ENGINE_CODE", str(_AGENT_DEFAULTS.get("code", "cursor")))
+ENGINE_REVIEW  = _env_text("PIPELINE_ENGINE_REVIEW", str(_AGENT_DEFAULTS.get("review", "gemini")))
 
 # 用户在飞书字段里可能填中文/大小写/别名，这里统一归一到 AGENT_CMDS 的 key。
-AGENT_ALIASES = {
+_DEFAULT_AGENT_ALIASES = {
     "claude": "claude",
     "Claude": "claude",
     "claude code": "claude",
@@ -161,15 +218,26 @@ AGENT_ALIASES = {
     "cursor-agent": "cursor",
     "Cursor Agent": "cursor",
 }
+_AGENT_ALIASES = _AGENTS.get("aliases", {}) if isinstance(_AGENTS.get("aliases"), dict) else {}
+AGENT_ALIASES = {**_DEFAULT_AGENT_ALIASES, **{str(k): str(v) for k, v in _AGENT_ALIASES.items()}}
 
 # 各引擎的 headless 命令模板，prompt 走 stdin 传入。
 # 无人值守的免交互权限 flag 已配：cursor(--force --trust)、gemini(--skip-trust --approval-mode yolo)。
 # claude/codex 若用于开发阶段需补：claude → --permission-mode/--dangerously-skip-permissions；codex → approval 策略。
-AGENT_CMDS = {
+_DEFAULT_AGENT_CMDS = {
     "claude": ["claude", "-p", "--output-format", "text"],
     "codex":  ["codex", "exec", "-"],
     "gemini": ["gemini", "--skip-trust", "--approval-mode", "yolo", "-p", " "],
     "cursor": ["cursor-agent", "--print", "--force", "--trust", "--output-format", "text"],
+}
+_AGENT_COMMANDS = _AGENTS.get("commands", {}) if isinstance(_AGENTS.get("commands"), dict) else {}
+AGENT_CMDS = {
+    **_DEFAULT_AGENT_CMDS,
+    **{
+        str(engine): [str(part) for part in argv]
+        for engine, argv in _AGENT_COMMANDS.items()
+        if isinstance(argv, list) and argv
+    },
 }
 
 # 启动 agent 子进程前，从环境里剔除这些会污染认证的变量。

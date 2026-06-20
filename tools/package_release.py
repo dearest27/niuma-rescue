@@ -35,6 +35,8 @@ EXCLUDE_FILES = {
     ".env",
     ".DS_Store",
     ".dispatcher.lock",
+    "agents.json",
+    "fields.json",
     "pipeline_realtime.py",
     "workspaces.json",
     "_run_tests_tmp.py",

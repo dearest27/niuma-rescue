@@ -1,0 +1,18 @@
+{
+  "defaults": {
+    "clarify": "claude",
+    "code": "cursor",
+    "review": "gemini"
+  },
+  "commands": {
+    "claude": ["claude", "-p", "--output-format", "text"],
+    "codex": ["codex", "exec", "-"],
+    "gemini": ["gemini", "--skip-trust", "--approval-mode", "yolo", "-p", " "],
+    "cursor": ["cursor-agent", "--print", "--force", "--trust", "--output-format", "text"]
+  },
+  "aliases": {
+    "Claude Code": "claude",
+    "Cursor Agent": "cursor",
+    "openai codex": "codex"
+  }
+}

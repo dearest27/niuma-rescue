@@ -22,6 +22,8 @@ FORBIDDEN_ZIP_PARTS = {
     "dist",
     "scripts/windows",
     "workspaces.json",
+    "fields.json",
+    "agents.json",
 }
 REQUIRED_ZIP_PATHS = {
     "README.md",
