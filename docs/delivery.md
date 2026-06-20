@@ -58,6 +58,7 @@ scripts/windows/
 ## 发布前验收
 
 ```bash
+python tools/test.py
 python tools/verify_release.py 0.1.0
 ```
 

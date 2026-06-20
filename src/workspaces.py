@@ -14,7 +14,7 @@ from typing import Any
 
 import config as C
 
-_WORKSPACE_TOKEN_RE = re.compile(r"(?:^|\s)#(?P<key>[A-Za-z0-9_.-]+)(?=\s|[：:]|$)")
+_WORKSPACE_TOKEN_RE = re.compile(r"(?:^|\s)#(?P<key>[A-Za-z][A-Za-z0-9_.-]*)(?:\s|[：:]|$)")
 
 
 @dataclass(frozen=True)

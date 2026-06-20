@@ -34,6 +34,8 @@ REQUIRED_ZIP_PATHS = {
     "src/dispatcher.py",
     "src/agent_adapters.py",
     "tools/package_release.py",
+    "tools/test.py",
+    "tools/verify_release.py",
     "docs/RELEASE_CHECKLIST.md",
 }
 TEXT_SUFFIXES = {".md", ".py", ".sh", ".ps1", ".txt", ".example", ".toml", ".json", ".yml", ".yaml"}
@@ -77,10 +79,16 @@ def check_python_compile() -> None:
     files = [ROOT / "install.py"]
     files.extend(sorted((ROOT / "src").glob("*.py")))
     files.extend(sorted((ROOT / "tools").glob("*.py")))
+    files.extend(sorted((ROOT / "tests").glob("*.py")))
     for path in files:
         source = path.read_text(encoding="utf-8")
         compile(source, str(path), "exec")
     ok(f"Python 语法检查通过（{len(files)} 个文件）")
+
+
+def check_unit_tests() -> None:
+    run([sys.executable, "-B", "tools/test.py"])
+    ok("稳定性测试通过")
 
 
 def check_requirements() -> None:
@@ -151,6 +159,7 @@ def main() -> int:
     try:
         check_bash()
         check_python_compile()
+        check_unit_tests()
         check_requirements()
         check_env_example()
         zip_path = build_release(args.version)
