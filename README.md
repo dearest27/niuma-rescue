@@ -56,6 +56,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 - 创建 `.venv`
 - 安装 `lark-oapi`、`filelock`
 - 交互写入 `.env`
+- 引导生成 `workspaces.json`（Git / GitLab / SVN）
 - 运行 `src/bootstrap.py` 创建飞书多维表格和字段
 - 运行 `src/doctor.py` 自检
 - 可选注册常驻进程：macOS launchd / Windows 计划任务

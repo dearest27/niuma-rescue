@@ -22,6 +22,8 @@ com.agentpipeline.listener
 com.agentpipeline.dispatcher
 ```
 
+首次运行会引导生成 `workspaces.json`，可选择普通 Git、本地 GitLab MR 流程或 SVN 工作副本流程。
+
 ## Windows
 
 ```powershell
@@ -34,6 +36,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 AgentPipelineListener
 AgentPipelineDispatcher
 ```
+
+首次运行会引导生成 `workspaces.json`，可选择普通 Git、本地 GitLab MR 流程或 SVN 工作副本流程。
 
 ## 手动启动
 

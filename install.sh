@@ -34,6 +34,17 @@ _ask() {  # _ask KEY 提示 [默认]
   val="${val:-$def}"
   [ -n "$val" ] && _set "$1" "$val"
 }
+_prompt() {  # _prompt 提示 默认值
+  local val
+  read -r -p "  $1 [$2]: " val
+  printf '%s' "${val:-$2}"
+}
+_bool_json() {
+  case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    y|yes|true|1|on) printf 'true' ;;
+    *) printf 'false' ;;
+  esac
+}
 
 # ── 1. venv + 依赖 ───────────────────────────────────────
 if [ ! -x "$PY" ]; then
@@ -53,32 +64,75 @@ _ask FEISHU_APP_ID    "飞书 APP_ID (cli_...)"
 _ask FEISHU_APP_SECRET "飞书 APP_SECRET"
 echo " · 目标代码仓库（agent 在这里改代码，需 git 仓库且有 origin/main）"
 _ask PIPELINE_REPO_PATH "目标仓库绝对路径"
-if [ ! -f workspaces.json ]; then
-  repo_path="$(_get PIPELINE_REPO_PATH)"
-  if ! _is_placeholder "$repo_path"; then
-    repo_name="$(basename "$repo_path")"
-    cat > workspaces.json <<JSON
-{
-  "default": "$repo_name",
-  "items": {
-    "$repo_name": {
-      "path": "$repo_path",
-      "scm": "git",
-      "base": "origin/main",
-      "test_cmd": ""
-    }
-  }
-}
-JSON
-    echo "  ✓ 已生成 workspaces.json（默认工作区：$repo_name）"
-  fi
-fi
 echo " · 各阶段默认 agent（cursor / claude / gemini / codex；可在飞书用「需求@xxx」按需覆盖）"
 _ask PIPELINE_ENGINE_CLARIFY "澄清阶段 agent" "${PIPELINE_ENGINE_CLARIFY:-cursor}"
 _ask PIPELINE_ENGINE_CODE    "开发阶段 agent" "${PIPELINE_ENGINE_CODE:-cursor}"
 _ask PIPELINE_ENGINE_REVIEW  "Review 阶段 agent" "${PIPELINE_ENGINE_REVIEW:-cursor}"
 echo " · 验收门命令（在 worktree 里跑，exit 0 通过；留空则不设门）"
 _ask PIPELINE_TEST_CMD "测试/lint 命令，如 npm run lint"
+if [ ! -f workspaces.json ]; then
+  repo_path="$(_get PIPELINE_REPO_PATH)"
+  if ! _is_placeholder "$repo_path"; then
+    repo_name="$(basename "$repo_path")"
+    test_cmd="$(_get PIPELINE_TEST_CMD)"
+    echo " · 工作区 SCM（生成 workspaces.json，可稍后手改）"
+    scm="$(_prompt "SCM 类型 git/svn" "git")"
+    scm="$(printf '%s' "$scm" | tr '[:upper:]' '[:lower:]')"
+    if [ "$scm" = "svn" ]; then
+      svn_base="$(_prompt "SVN base URL（trunk/branch）" "")"
+      svn_commit="$(_prompt "Review 通过后自动 svn commit? y/N" "N")"
+      svn_commit_bool="$(_bool_json "$svn_commit")"
+      cat > workspaces.json <<JSON
+{
+  "default": "$repo_name",
+  "items": {
+    "$repo_name": {
+      "path": "$repo_path",
+      "scm": "svn",
+      "base": "$svn_base",
+      "push_enabled": $svn_commit_bool,
+      "test_cmd": "$test_cmd"
+    }
+  }
+}
+JSON
+    else
+      git_base="$(_prompt "Git base ref" "origin/main")"
+      target_branch="${git_base##*/}"
+      review_provider="$(_prompt "自动创建 Review? none/github/gitlab" "none")"
+      review_provider="$(printf '%s' "$review_provider" | tr '[:upper:]' '[:lower:]')"
+      case "$review_provider" in github|gitlab) auto_review=true ;; *) auto_review=false; review_provider=none ;; esac
+      extra=""
+      if [ "$review_provider" = "gitlab" ]; then
+        gitlab_repo="$(_prompt "GitLab 项目 group/project（可留空让 glab 从 remote 推断）" "")"
+        extra=",
+      \"gitlab_repo\": \"$gitlab_repo\""
+      elif [ "$review_provider" = "github" ]; then
+        gh_repo="$(_prompt "GitHub 项目 org/repo（可留空）" "$(_get PIPELINE_GH_REPO)")"
+        extra=",
+      \"gh_repo\": \"$gh_repo\""
+      fi
+      cat > workspaces.json <<JSON
+{
+  "default": "$repo_name",
+  "items": {
+    "$repo_name": {
+      "path": "$repo_path",
+      "scm": "git",
+      "base": "$git_base",
+      "target_branch": "$target_branch",
+      "push_enabled": $auto_review,
+      "pr_enabled": $auto_review,
+      "pr_provider": "$review_provider"$extra,
+      "test_cmd": "$test_cmd"
+    }
+  }
+}
+JSON
+    fi
+    echo "  ✓ 已生成 workspaces.json（默认工作区：$repo_name / scm=$scm）"
+  fi
+fi
 
 # ── 3. 建飞书多维表格 ────────────────────────────────────
 echo "[4/6] 飞书多维表格"

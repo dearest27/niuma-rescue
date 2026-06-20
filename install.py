@@ -60,6 +60,15 @@ def ask(key: str, prompt: str, default: str = "") -> None:
         env_set(key, val)
 
 
+def prompt(text: str, default: str = "") -> str:
+    val = input(f"  {text} [{default}]: ").strip()
+    return val or default
+
+
+def yes(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def main() -> None:
     print("=" * 46)
     print(" agent-pipeline 引导安装")
@@ -86,13 +95,13 @@ def main() -> None:
     ask("FEISHU_APP_SECRET", "飞书 APP_SECRET")
     print(" · 目标代码仓库（agent 在这里改代码，需 git 仓库且有 origin/main）")
     ask("PIPELINE_REPO_PATH", "目标仓库绝对路径")
-    _ensure_workspaces()
     print(" · 各阶段默认 agent（cursor/claude/gemini/codex；飞书可用「需求@xxx」覆盖）")
     ask("PIPELINE_ENGINE_CLARIFY", "澄清阶段 agent", "cursor")
     ask("PIPELINE_ENGINE_CODE", "开发阶段 agent", "cursor")
     ask("PIPELINE_ENGINE_REVIEW", "Review 阶段 agent", "cursor")
     print(" · 验收门命令（在 worktree 里跑，exit 0 通过；留空则不设门）")
     ask("PIPELINE_TEST_CMD", "测试/lint 命令，如 npm run lint")
+    _ensure_workspaces()
 
     # 4. 建表
     print("[4/6] 飞书多维表格 ...")
@@ -128,11 +137,43 @@ def _ensure_workspaces() -> None:
     if not repo or repo in _PLACEHOLDERS:
         return
     name = Path(repo).name or "default"
-    f.write_text(json.dumps({
-        "default": name,
-        "items": {name: {"path": repo, "scm": "git", "base": "origin/main", "test_cmd": ""}},
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"  ✓ 已生成 workspaces.json（默认工作区：{name}）")
+    test_cmd = env_load().get("PIPELINE_TEST_CMD", "")
+    print(" · 工作区 SCM（生成 workspaces.json，可稍后手改）")
+    scm = prompt("SCM 类型 git/svn", "git").lower()
+    if scm == "svn":
+        base = prompt("SVN base URL（trunk/branch）", "")
+        auto_commit = yes(prompt("Review 通过后自动 svn commit? y/N", "N"))
+        item = {
+            "path": repo,
+            "scm": "svn",
+            "base": base,
+            "push_enabled": auto_commit,
+            "test_cmd": test_cmd,
+        }
+    else:
+        scm = "git"
+        base = prompt("Git base ref", "origin/main")
+        target = base.rstrip("/").rsplit("/", 1)[-1] if "/" in base else base
+        provider = prompt("自动创建 Review? none/github/gitlab", "none").lower()
+        auto_review = provider in {"github", "gitlab"}
+        if not auto_review:
+            provider = "none"
+        item = {
+            "path": repo,
+            "scm": "git",
+            "base": base,
+            "target_branch": target,
+            "push_enabled": auto_review,
+            "pr_enabled": auto_review,
+            "pr_provider": provider,
+            "test_cmd": test_cmd,
+        }
+        if provider == "gitlab":
+            item["gitlab_repo"] = prompt("GitLab 项目 group/project（可留空让 glab 从 remote 推断）", "")
+        elif provider == "github":
+            item["gh_repo"] = prompt("GitHub 项目 org/repo（可留空）", env_load().get("PIPELINE_GH_REPO", ""))
+    f.write_text(json.dumps({"default": name, "items": {name: item}}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"  ✓ 已生成 workspaces.json（默认工作区：{name} / scm={scm}）")
 
 
 def _detect_path() -> str:

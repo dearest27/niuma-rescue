@@ -66,6 +66,20 @@ function Ask-DotEnv {
     }
 }
 
+function Read-PromptValue {
+    param([string]$Prompt, [string]$Default = "")
+    $value = Read-Host "  $Prompt [$Default]"
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return $Default
+    }
+    return $value
+}
+
+function Test-YesValue {
+    param([string]$Value)
+    return $Value -match "^(?i:y|yes|true|1|on)$"
+}
+
 function Ensure-Workspaces {
     if (Test-Path "workspaces.json") {
         return
@@ -78,20 +92,56 @@ function Ensure-Workspaces {
     if ([string]::IsNullOrWhiteSpace($repoName)) {
         $repoName = "default"
     }
-    $items = [ordered]@{}
-    $items[$repoName] = [ordered]@{
-        path = $repo
-        scm = "git"
-        base = "origin/main"
-        test_cmd = ""
+    $testCmd = Get-DotEnvValue "PIPELINE_TEST_CMD"
+    Write-Host " · 工作区 SCM（生成 workspaces.json，可稍后手改）"
+    $scm = (Read-PromptValue "SCM 类型 git/svn" "git").ToLowerInvariant()
+    if ($scm -eq "svn") {
+        $svnBase = Read-PromptValue "SVN base URL（trunk/branch）" ""
+        $autoCommit = Test-YesValue (Read-PromptValue "Review 通过后自动 svn commit? y/N" "N")
+        $item = [ordered]@{
+            path = $repo
+            scm = "svn"
+            base = $svnBase
+            push_enabled = $autoCommit
+            test_cmd = $testCmd
+        }
+    } else {
+        $scm = "git"
+        $gitBase = Read-PromptValue "Git base ref" "origin/main"
+        $targetBranch = Split-Path -Leaf $gitBase
+        if ([string]::IsNullOrWhiteSpace($targetBranch)) {
+            $targetBranch = "main"
+        }
+        $reviewProvider = (Read-PromptValue "自动创建 Review? none/github/gitlab" "none").ToLowerInvariant()
+        $autoReview = $reviewProvider -in @("github", "gitlab")
+        if (-not $autoReview) {
+            $reviewProvider = "none"
+        }
+        $item = [ordered]@{
+            path = $repo
+            scm = "git"
+            base = $gitBase
+            target_branch = $targetBranch
+            push_enabled = $autoReview
+            pr_enabled = $autoReview
+            pr_provider = $reviewProvider
+            test_cmd = $testCmd
+        }
+        if ($reviewProvider -eq "gitlab") {
+            $item["gitlab_repo"] = Read-PromptValue "GitLab 项目 group/project（可留空让 glab 从 remote 推断）" ""
+        } elseif ($reviewProvider -eq "github") {
+            $item["gh_repo"] = Read-PromptValue "GitHub 项目 org/repo（可留空）" (Get-DotEnvValue "PIPELINE_GH_REPO")
+        }
     }
+    $items = [ordered]@{}
+    $items[$repoName] = $item
     $data = [ordered]@{
         default = $repoName
         items = $items
     }
     $json = $data | ConvertTo-Json -Depth 8
     Set-Content "workspaces.json" -Value $json -Encoding UTF8
-    Write-Host "  ✓ 已生成 workspaces.json（默认工作区：$repoName）"
+    Write-Host "  ✓ 已生成 workspaces.json（默认工作区：$repoName / scm=$scm）"
 }
 
 function Find-BasePython {
@@ -134,7 +184,6 @@ Ask-DotEnv "FEISHU_APP_SECRET" "飞书 APP_SECRET"
 
 Write-Host " · 目标代码仓库（agent 在这里改代码，需 git 仓库且有 origin/main）"
 Ask-DotEnv "PIPELINE_REPO_PATH" "目标仓库绝对路径，例如 C:\Users\you\project"
-Ensure-Workspaces
 
 Write-Host " · 各阶段默认 agent（cursor / claude / gemini / codex；可在飞书用「需求@xxx」按需覆盖）"
 Ask-DotEnv "PIPELINE_ENGINE_CLARIFY" "澄清阶段 agent" "cursor"
@@ -142,6 +191,7 @@ Ask-DotEnv "PIPELINE_ENGINE_CODE" "开发阶段 agent" "cursor"
 Ask-DotEnv "PIPELINE_ENGINE_REVIEW" "Review 阶段 agent" "cursor"
 Write-Host " · 验收门命令（在 worktree 里跑，exit 0 通过；留空则不设门）"
 Ask-DotEnv "PIPELINE_TEST_CMD" "测试/lint 命令，如 npm run lint"
+Ensure-Workspaces
 
 # ── 3. 建飞书多维表格 ────────────────────────────────────
 Write-Host "[4/6] 飞书多维表格"

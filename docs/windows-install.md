@@ -13,7 +13,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 - 创建 `.venv`
 - 安装依赖
 - 交互写 `.env`
-- 生成默认 `workspaces.json`
+- 引导生成 `workspaces.json`（Git / GitLab / SVN）
 - 运行 `src/bootstrap.py`
 - 运行 `src/doctor.py`
 - 可选创建登录启动的计划任务
