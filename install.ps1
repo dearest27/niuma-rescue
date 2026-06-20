@@ -54,7 +54,9 @@ function Ask-DotEnv {
     if (Test-PlaceholderValue $current) {
         $current = ""
     }
-    if ($null -eq $Default -or $Default -eq "") {
+    if (-not [string]::IsNullOrWhiteSpace($current)) {
+        $Default = $current
+    } elseif ($null -eq $Default -or $Default -eq "") {
         $Default = $current
     }
     $value = Read-Host "  $Prompt [$Default]"
@@ -144,6 +146,37 @@ function Ensure-Workspaces {
     Write-Host "  ✓ 已生成 workspaces.json（默认工作区：$repoName / scm=$scm）"
 }
 
+function Copy-ExampleIfMissing {
+    param([string]$Example, [string]$Target)
+    if (Test-Path $Target) {
+        return $false
+    }
+    if (-not (Test-Path $Example)) {
+        return $false
+    }
+    Copy-Item $Example $Target
+    return $true
+}
+
+function Ensure-ConfigFiles {
+    Write-Host " · 可迁移配置文件"
+    $fieldsCfg = Read-Host "  接入已有飞书 Base，需要自定义字段名映射 fields.json? [y/N]"
+    if ($fieldsCfg -match "^[Yy]") {
+        if (Copy-ExampleIfMissing "fields.example.json" "fields.json") {
+            Write-Host "  ✓ 已生成 fields.json，请按你的 Base 列名修改右侧值"
+        } else {
+            Write-Host "  fields.json 已存在，跳过"
+        }
+        Set-DotEnvValue "PIPELINE_FIELDS_FILE" (Join-Path $Dir "fields.json")
+    }
+    if (Copy-ExampleIfMissing "agents.example.json" "agents.json") {
+        Write-Host "  ✓ 已生成 agents.json（默认 agent/命令模板，可稍后手改）"
+    } else {
+        Write-Host "  agents.json 已存在，跳过"
+    }
+    Set-DotEnvValue "PIPELINE_AGENTS_FILE" (Join-Path $Dir "agents.json")
+}
+
 function Find-BasePython {
     $python = Get-Command python -ErrorAction SilentlyContinue
     if ($python) { return @($python.Source) }
@@ -192,6 +225,7 @@ Ask-DotEnv "PIPELINE_ENGINE_REVIEW" "Review 阶段 agent" "cursor"
 Write-Host " · 验收门命令（在 worktree 里跑，exit 0 通过；留空则不设门）"
 Ask-DotEnv "PIPELINE_TEST_CMD" "测试/lint 命令，如 npm run lint"
 Ensure-Workspaces
+Ensure-ConfigFiles
 
 # ── 3. 建飞书多维表格 ────────────────────────────────────
 Write-Host "[4/6] 飞书多维表格"

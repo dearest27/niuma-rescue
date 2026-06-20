@@ -27,9 +27,13 @@ _set() {  # _set KEY VALUE
   mv .env.tmp .env
 }
 _ask() {  # _ask KEY 提示 [默认]
-  local cur def val; cur="$(_get "$1")"; def="${3:-$cur}"
+  local cur def val; cur="$(_get "$1")"
   _is_placeholder "$cur" && cur=""
-  [ "${3+x}" ] || def="$cur"
+  if [ -n "$cur" ]; then
+    def="$cur"
+  else
+    def="${3:-}"
+  fi
   read -r -p "  $2 [${def}]: " val
   val="${val:-$def}"
   [ -n "$val" ] && _set "$1" "$val"
@@ -44,6 +48,12 @@ _bool_json() {
     y|yes|true|1|on) printf 'true' ;;
     *) printf 'false' ;;
   esac
+}
+_copy_example_if_missing() {  # _copy_example_if_missing example target
+  [ -f "$2" ] && return 1
+  [ -f "$1" ] || return 1
+  cp "$1" "$2"
+  return 0
 }
 
 # ── 1. venv + 依赖 ───────────────────────────────────────
@@ -133,6 +143,23 @@ JSON
     echo "  ✓ 已生成 workspaces.json（默认工作区：$repo_name / scm=$scm）"
   fi
 fi
+
+echo " · 可迁移配置文件"
+read -r -p "  接入已有飞书 Base，需要自定义字段名映射 fields.json? [y/N]: " fields_cfg
+if [[ "${fields_cfg:-N}" =~ ^[Yy] ]]; then
+  if _copy_example_if_missing fields.example.json fields.json; then
+    echo "  ✓ 已生成 fields.json，请按你的 Base 列名修改右侧值"
+  else
+    echo "  fields.json 已存在，跳过"
+  fi
+  _set PIPELINE_FIELDS_FILE "$DIR/fields.json"
+fi
+if _copy_example_if_missing agents.example.json agents.json; then
+  echo "  ✓ 已生成 agents.json（默认 agent/命令模板，可稍后手改）"
+else
+  echo "  agents.json 已存在，跳过"
+fi
+_set PIPELINE_AGENTS_FILE "$DIR/agents.json"
 
 # ── 3. 建飞书多维表格 ────────────────────────────────────
 echo "[4/6] 飞书多维表格"

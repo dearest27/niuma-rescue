@@ -104,6 +104,7 @@ def main() -> None:
     print(" · 验收门命令（在 worktree 里跑，exit 0 通过；留空则不设门）")
     ask("PIPELINE_TEST_CMD", "测试/lint 命令，如 npm run lint")
     _ensure_workspaces()
+    _ensure_config_files()
 
     # 4. 建表
     print("[4/6] 飞书多维表格 ...")
@@ -178,6 +179,33 @@ def _ensure_workspaces() -> None:
             item["gh_repo"] = prompt("GitHub 项目 org/repo（可留空）", env_load().get("PIPELINE_GH_REPO", ""))
     f.write_text(json.dumps({"default": name, "items": {name: item}}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"  ✓ 已生成 workspaces.json（默认工作区：{name} / scm={scm}）")
+
+
+def _copy_example_if_missing(example_name: str, target_name: str) -> bool:
+    target = DIR / target_name
+    if target.exists():
+        return False
+    example = DIR / example_name
+    if not example.exists():
+        return False
+    target.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    return True
+
+
+def _ensure_config_files() -> None:
+    print(" · 可迁移配置文件")
+    if input("  接入已有飞书 Base，需要自定义字段名映射 fields.json? [y/N]: ").strip().lower().startswith("y"):
+        if _copy_example_if_missing("fields.example.json", "fields.json"):
+            print("  ✓ 已生成 fields.json，请按你的 Base 列名修改右侧值")
+        else:
+            print("  fields.json 已存在，跳过")
+        env_set("PIPELINE_FIELDS_FILE", str(DIR / "fields.json"))
+
+    if _copy_example_if_missing("agents.example.json", "agents.json"):
+        print("  ✓ 已生成 agents.json（默认 agent/命令模板，可稍后手改）")
+    else:
+        print("  agents.json 已存在，跳过")
+    env_set("PIPELINE_AGENTS_FILE", str(DIR / "agents.json"))
 
 
 def _detect_path() -> str:
