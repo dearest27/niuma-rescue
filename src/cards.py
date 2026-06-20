@@ -29,6 +29,10 @@ def _button(text: str, action: str, record_id: str, btn_type: str = "primary") -
     }
 
 
+def _action_row(actions: list[dict]) -> dict:
+    return {"tag": "action", "actions": actions}
+
+
 def _trunc(s: str, n: int = 1800) -> str:
     s = s or ""
     return s if len(s) <= n else s[:n] + "\n…（略）"
@@ -95,18 +99,47 @@ def status_card(rec: dict) -> dict:
     """当前需求状态卡片。"""
     f = _record_fields(rec)
     status = f.get(C.F_STATUS)
+    rid = rec.get("record_id", "")
+    actions: list[dict] = []
+    if rid:
+        if status in C.ACTIONABLE:
+            actions.extend([
+                _button("重试", "retry", rid),
+                _button("清锁", "clear_lock", rid, "default"),
+            ])
+        elif status == C.S_BLOCKED:
+            actions.extend([
+                _button("解除阻塞", "unblock_dev", rid),
+                _button("重新澄清", "restart_clarify", rid, "default"),
+                _button("清锁", "clear_lock", rid, "default"),
+            ])
+        elif status == C.S_CONFIRM:
+            actions.extend([
+                _button("确认开发", "confirm", rid),
+                _button("重新澄清", "restart_clarify", rid, "default"),
+            ])
+        elif status == C.S_ANSWER:
+            actions.append(_button("重新澄清", "restart_clarify", rid, "default"))
+        elif status == C.S_MERGE:
+            actions.extend([
+                _button("已合并 / 完成", "done", rid),
+                _button("重新澄清", "restart_clarify", rid, "default"),
+            ])
+    elements = [
+        _fields(
+            ("状态", status or "-"),
+            ("工作区", f.get(C.F_WORKSPACE) or "默认"),
+            ("执行 Agent", f.get(C.F_AGENT) or "默认"),
+            ("失败次数", f.get(C.F_FAILS) or 0),
+        ),
+        _md(f"**链接**\n{_link_text(f.get(C.F_LINK))}"),
+    ]
+    if actions:
+        elements.append(_action_row(actions))
     return {
         "config": {"wide_screen_mode": True},
         "header": _header(f"当前需求：{_title(rec)}", status),
-        "elements": [
-            _fields(
-                ("状态", status or "-"),
-                ("工作区", f.get(C.F_WORKSPACE) or "默认"),
-                ("执行 Agent", f.get(C.F_AGENT) or "默认"),
-                ("失败次数", f.get(C.F_FAILS) or 0),
-            ),
-            _md(f"**链接**\n{_link_text(f.get(C.F_LINK))}"),
-        ],
+        "elements": elements,
     }
 
 
@@ -126,7 +159,7 @@ def confirm_card(rec: dict) -> dict:
             _md(_trunc(f.get(C.F_PRD) or "（无 PRD）")),
             {"tag": "hr"},
             _md("确认后会进入开发；如果要补充或修改，直接回复文字即可。"),
-            {"tag": "action", "actions": [_button("确认开发", "confirm", rid)]},
+            _action_row([_button("确认开发", "confirm", rid)]),
         ],
     }
 
@@ -147,7 +180,7 @@ def merge_card(rec: dict) -> dict:
             ),
             _md(f"**Review 已通过**\n\nPR / MR / 分支：\n{_link_text(link)}"),
             _md("合并或确认提交后，点击下面按钮收尾。"),
-            {"tag": "action", "actions": [_button("已合并 / 完成", "done", rid)]},
+            _action_row([_button("已合并 / 完成", "done", rid)]),
         ],
     }
 

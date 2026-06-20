@@ -33,6 +33,21 @@ def handle_card_action(value: dict) -> tuple[str, bool, dict | None]:
         lark.update(rid, {C.F_STATUS: C.S_DONE})
         return ("✅ 已标记完成", False,
                 cards.done_toast_card(f"✅ 已完成：{title}", "需求已收尾。", "green"))
+    manual_actions = {
+        "retry": lambda: ops.retry_record(rec),
+        "clear_lock": lambda: ops.clear_lock(rec),
+        "restart_clarify": lambda: ops.restart_clarify(rec),
+        "unblock_dev": lambda: ops.unblock_record(rec, C.S_DEV),
+        "mark_done": lambda: ops.mark_done(rec),
+    }
+    if action in manual_actions:
+        result = manual_actions[action]()
+        template = "green" if result.ok else "yellow"
+        return (
+            result.message,
+            result.dispatch,
+            cards.done_toast_card(("✅ " if result.ok else "⚠️ ") + title, result.message, template),
+        )
     return "未知操作", False, None
 
 _INTAKE_RE = re.compile(

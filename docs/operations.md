@@ -24,6 +24,7 @@ PYTHONDONTWRITEBYTECODE=1
 
 ```bash
 python3 -B src/pipelinectl.py status
+python3 -B src/pipelinectl.py diagnose
 python3 -B src/pipelinectl.py logs
 python3 -B src/pipelinectl.py once
 python3 -B src/pipelinectl.py inbox
@@ -35,6 +36,17 @@ python3 -B src/pipelinectl.py restart
 ```
 
 `status` 会同时展示 launchd 服务状态、本地健康心跳和最近事件。健康状态写在 `state/` 目录，属于运行时产物，不进入交付包。
+
+`diagnose` 会汇总配置、服务心跳、工作区、agent CLI、inbox、runs 和最近错误；加 `--doctor` 会继续运行完整部署自检。
+
+本地 smoke 检查：
+
+```bash
+python3 -B tools/smoke.py
+python3 -B tools/smoke.py --feishu --dispatch
+```
+
+默认 `smoke.py` 不调用飞书、不跑 dispatcher，只检查本地文件、模块、工作区和 CLI；加 `--feishu` / `--dispatch` 后才做真实环境探测。
 
 `inbox` 查看本地 SQLite 收件箱；`replay <id>` 重放某条消息，`replay --failed` 重放失败消息。
 

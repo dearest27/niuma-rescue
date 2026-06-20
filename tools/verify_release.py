@@ -34,6 +34,7 @@ REQUIRED_ZIP_PATHS = {
     "src/dispatcher.py",
     "src/agent_adapters.py",
     "tools/package_release.py",
+    "tools/smoke.py",
     "tools/test.py",
     "tools/verify_release.py",
     "docs/RELEASE_CHECKLIST.md",
@@ -89,6 +90,11 @@ def check_python_compile() -> None:
 def check_unit_tests() -> None:
     run([sys.executable, "-B", "tools/test.py"])
     ok("稳定性测试通过")
+
+
+def check_smoke() -> None:
+    run([sys.executable, "-B", "tools/smoke.py"])
+    ok("本地 smoke 检查通过")
 
 
 def check_requirements() -> None:
@@ -160,6 +166,7 @@ def main() -> int:
         check_bash()
         check_python_compile()
         check_unit_tests()
+        check_smoke()
         check_requirements()
         check_env_example()
         zip_path = build_release(args.version)

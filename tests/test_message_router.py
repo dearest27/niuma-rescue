@@ -4,6 +4,7 @@ import unittest
 
 import config as C
 import message_router
+import ops
 
 
 class FakeLark:
@@ -41,9 +42,15 @@ class FakeLark:
 class MessageRouterTest(unittest.TestCase):
     def setUp(self) -> None:
         self._old_lark = message_router.lark
+        self._old_ops_lark = ops.lark
+        self._old_runs_clear = ops.runs.clear
+        self._old_runs_retry_now = ops.runs.retry_now
 
     def tearDown(self) -> None:
         message_router.lark = self._old_lark
+        ops.lark = self._old_ops_lark
+        ops.runs.clear = self._old_runs_clear
+        ops.runs.retry_now = self._old_runs_retry_now
 
     def test_parse_intake_supports_agent_and_workspace(self) -> None:
         body, agent, workspace = message_router.parse_intake("需求@Cursor #frontend-app：新增登录页文档")
@@ -132,6 +139,53 @@ class MessageRouterTest(unittest.TestCase):
         self.assertTrue(handled)
         self.assertEqual(fake.records[0]["fields"][C.F_STATUS], C.S_CLARIFY)
         self.assertIn("【回答】只影响登录页", fake.records[0]["fields"][C.F_CLARIFY])
+
+    def test_card_action_unblock_uses_ops_and_dispatches(self) -> None:
+        fake = FakeLark([
+            {
+                "record_id": "rec_1",
+                "fields": {
+                    C.F_CHAT: "oc_1",
+                    C.F_STATUS: C.S_BLOCKED,
+                    C.F_TITLE: "修复登录按钮",
+                    C.F_LOG: "",
+                    C.F_FAILS: 2,
+                },
+            }
+        ])
+        message_router.lark = fake
+        ops.lark = fake
+        ops.runs.clear = lambda record_id, reason="": True
+
+        toast, dispatch, card = message_router.handle_card_action({"record_id": "rec_1", "action": "unblock_dev"})
+
+        self.assertTrue(dispatch)
+        self.assertIn("已解除阻塞", toast)
+        self.assertEqual(fake.records[0]["fields"][C.F_STATUS], C.S_DEV)
+        self.assertIsNotNone(card)
+
+    def test_card_action_retry_dispatches_for_actionable_record(self) -> None:
+        fake = FakeLark([
+            {
+                "record_id": "rec_1",
+                "fields": {
+                    C.F_CHAT: "oc_1",
+                    C.F_STATUS: C.S_DEV,
+                    C.F_TITLE: "修复登录按钮",
+                    C.F_LOG: "",
+                    C.F_FAILS: 1,
+                },
+            }
+        ])
+        message_router.lark = fake
+        ops.lark = fake
+        ops.runs.retry_now = lambda record_id, reason="": True
+
+        toast, dispatch, _card = message_router.handle_card_action({"record_id": "rec_1", "action": "retry"})
+
+        self.assertTrue(dispatch)
+        self.assertIn("立即重试", toast)
+        self.assertEqual(fake.records[0]["fields"][C.F_FAILS], 0)
 
 
 if __name__ == "__main__":

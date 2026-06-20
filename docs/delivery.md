@@ -59,6 +59,7 @@ scripts/windows/
 
 ```bash
 python tools/test.py
+python tools/smoke.py
 python tools/verify_release.py 0.1.0
 ```
 

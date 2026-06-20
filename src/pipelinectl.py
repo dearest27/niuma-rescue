@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -88,6 +89,99 @@ def cmd_status(_: argparse.Namespace) -> int:
             if e.get("error"):
                 msg += f" error={str(e.get('error'))[:120]}"
             print(msg)
+    return 0
+
+
+def _mark(ok: bool) -> str:
+    return "OK" if ok else "WARN"
+
+
+def cmd_diagnose(args: argparse.Namespace) -> int:
+    print("agent-pipeline diagnose")
+    print(f"  dir: {PIPELINE_DIR}")
+    print(f"  state: {health.STATE_DIR}")
+    print()
+
+    print("config:")
+    for key, value in (
+        ("FEISHU_APP_ID", bool(os.getenv("FEISHU_APP_ID"))),
+        ("FEISHU_APP_SECRET", bool(os.getenv("FEISHU_APP_SECRET"))),
+        ("PIPELINE_BASE_TOKEN", bool(C.BASE_TOKEN)),
+        ("PIPELINE_TABLE_ID", bool(C.TABLE_ID)),
+        ("PIPELINE_REPO_PATH", bool(os.getenv("PIPELINE_REPO_PATH"))),
+    ):
+        print(f"  {_mark(value)} {key}")
+    print()
+
+    print("services:")
+    latest = health.read_all()
+    for service in SERVICES:
+        svc = service_info(service)
+        item = latest.get(service) or {}
+        service_ok = svc.get("state") not in {"not-loaded", "unknown"} or bool(item)
+        age = health.age_text(item.get("ts")) if item else "no heartbeat"
+        print(f"  {_mark(service_ok)} {service}: service={svc.get('state', 'unknown')} health={item.get('event', '-')}/{age}")
+    print()
+
+    print("workspaces:")
+    try:
+        for ws in workspaces.list_workspaces():
+            exists = ws.path.exists()
+            review = "-"
+            if ws.scm == "git" and ws.pr_enabled:
+                review = f"{ws.pr_provider}->{ws.target_branch or '-'}"
+            elif ws.scm == "svn" and ws.push_enabled:
+                review = "svn commit"
+            print(f"  {_mark(exists)} {ws.key}: scm={ws.scm} path={ws.path} base={ws.base_ref} review={review}")
+    except Exception as exc:
+        print(f"  WARN workspace config failed: {exc}")
+    print()
+
+    print("agent cli:")
+    for engine in sorted({C.ENGINE_CLARIFY, C.ENGINE_CODE, C.ENGINE_REVIEW}):
+        binary = C.AGENT_CMDS.get(engine, [engine])[0]
+        found = shutil.which(binary)
+        print(f"  {_mark(bool(found))} {engine}: {binary} {found or 'not found'}")
+    print()
+
+    print("inbox:")
+    counts = inbox.stats()
+    if counts:
+        print("  " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+    else:
+        print("  empty")
+    failed_inbox = inbox.list_rows(status="failed", limit=args.limit)
+    for row in failed_inbox:
+        print(f"  WARN inbox#{row['id']} failed attempts={row['attempts']} error={str(row.get('last_error') or '')[:180]}")
+    print()
+
+    print("runs:")
+    active = runs.list_runs(limit=args.limit, state="processing")
+    failed = runs.list_runs(limit=args.limit, state="failed")
+    if not active and not failed:
+        print("  no processing/failed runs")
+    for row in active:
+        print(f"  WARN processing record={row['record_id']} stage={row['stage']} age={health.age_text(row['updated_at'])}")
+    for row in failed:
+        retry = f" next_retry={health.age_text(row['next_retry_at'])}" if row.get("next_retry_at") else ""
+        print(f"  WARN failed record={row['record_id']} stage={row['stage']}{retry} error={str(row.get('last_error') or '')[:180]}")
+    print()
+
+    print("recent errors:")
+    shown = 0
+    for event in reversed(health.tail_events(args.limit * 3)):
+        if event.get("error") or "failed" in str(event.get("event", "")):
+            print(f"  {event.get('time')} {event.get('component')} {event.get('event')} {str(event.get('error') or '')[:180]}")
+            shown += 1
+            if shown >= args.limit:
+                break
+    if not shown:
+        print("  none")
+    print()
+
+    if args.doctor:
+        print("doctor:")
+        return cmd_doctor(argparse.Namespace())
     return 0
 
 
@@ -299,6 +393,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Operate local agent-pipeline services")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(func=cmd_status)
+    p_diagnose = sub.add_parser("diagnose")
+    p_diagnose.add_argument("-n", "--limit", type=int, default=5)
+    p_diagnose.add_argument("--doctor", action="store_true", help="also run doctor.py")
+    p_diagnose.set_defaults(func=cmd_diagnose)
     sub.add_parser("workspaces").set_defaults(func=cmd_workspaces)
     p_runs = sub.add_parser("runs")
     p_runs.add_argument("--state", choices=("processing", "failed", "done"))

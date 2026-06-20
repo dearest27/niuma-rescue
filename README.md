@@ -126,6 +126,7 @@ cursor / claude / codex / gemini
 
 ```bash
 python3 -B src/pipelinectl.py status
+python3 -B src/pipelinectl.py diagnose
 python3 -B src/pipelinectl.py logs
 python3 -B src/pipelinectl.py inbox
 python3 -B src/pipelinectl.py runs
@@ -133,6 +134,13 @@ python3 -B src/pipelinectl.py run-events
 python3 -B src/pipelinectl.py workspaces
 python3 -B src/pipelinectl.py doctor
 python3 -B src/pipelinectl.py restart
+```
+
+本地 smoke 检查：
+
+```bash
+python3 -B tools/smoke.py
+python3 -B tools/smoke.py --feishu --dispatch
 ```
 
 手动恢复：

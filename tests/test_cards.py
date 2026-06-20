@@ -46,6 +46,14 @@ class CardsTest(unittest.TestCase):
 
         self.assertEqual(card["header"]["template"], "red")
         self.assertTrue(any(element.get("fields") for element in card["elements"]))
+        actions = card["elements"][-1]["actions"]
+        self.assertEqual([action["value"]["action"] for action in actions], ["unblock_dev", "restart_clarify", "clear_lock"])
+
+    def test_status_card_for_actionable_record_has_retry_controls(self) -> None:
+        card = cards.status_card(rec(C.S_DEV))
+
+        actions = card["elements"][-1]["actions"]
+        self.assertEqual([action["value"]["action"] for action in actions], ["retry", "clear_lock"])
 
     def test_intake_card_is_non_action_receipt(self) -> None:
         card = cards.intake_card({
