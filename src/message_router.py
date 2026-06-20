@@ -97,6 +97,7 @@ _COMMAND_HELP = """可用指令：
 看板（所有在途需求一览）
 状态（当前会话的需求）
 统计 / 周报（运行报表）
+诊断（当前需求）
 重试
 清锁
 解除阻塞 [待澄清|开发中|Review中]
@@ -136,6 +137,27 @@ def _send_card_or_text(chat_id: str, card: dict, fallback: str) -> None:
         lark.send_text(chat_id, fallback)
 
 
+def _last_log(fields: dict) -> str:
+    lines = [line.strip() for line in (fields.get(C.F_LOG) or "").splitlines() if line.strip()]
+    return lines[-1] if lines else "-"
+
+
+def _record_diagnosis_text(rec: dict) -> str:
+    fields = rec["fields"]
+    return "\n".join([
+        f"需求诊断：{fields.get(C.F_TITLE) or rec.get('record_id')}",
+        f"· record_id: {rec.get('record_id')}",
+        f"· 状态: {fields.get(C.F_STATUS) or '-'}",
+        f"· 失败次数: {fields.get(C.F_FAILS) or 0}",
+        f"· 工作区: {fields.get(C.F_WORKSPACE) or '默认'}",
+        f"· Agent: 澄清={fields.get(C.F_AGENT_CLARIFY) or fields.get(C.F_AGENT) or C.ENGINE_CLARIFY} / "
+        f"开发={fields.get(C.F_AGENT_CODE) or fields.get(C.F_AGENT) or C.ENGINE_CODE} / "
+        f"Review={fields.get(C.F_AGENT_REVIEW) or fields.get(C.F_AGENT) or C.ENGINE_REVIEW}",
+        f"· 最近日志: {_last_log(fields)}",
+        "本地深度诊断：python src/pipelinectl.py diagnose " + str(rec.get("record_id")),
+    ])
+
+
 def handle_command(text: str, chat_id: str, records: list[dict]) -> bool | None:
     """Return True/False when a command was handled; None means not a command."""
     normalized = re.sub(r"\s+", " ", text.strip())
@@ -151,6 +173,13 @@ def handle_command(text: str, chat_id: str, records: list[dict]) -> bool | None:
         return False
     if normalized in {"周报", "weekly"}:
         lark.send_text(chat_id, health.summary_text(168))
+        return False
+    if normalized in {"诊断", "diagnose", "/diagnose"}:
+        rec = _active_record(records, chat_id)
+        if not rec:
+            lark.send_text(chat_id, "当前会话没有进行中的需求。")
+            return False
+        lark.send_text(chat_id, _record_diagnosis_text(rec))
         return False
     if normalized == "状态":
         rec = _active_record(records, chat_id)

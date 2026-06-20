@@ -102,6 +102,10 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
     print(f"  state: {health.STATE_DIR}")
     print()
 
+    if args.record_id:
+        _print_record_diagnosis(args.record_id, args.limit)
+        print()
+
     print("config:")
     for key, value in (
         ("FEISHU_APP_ID", bool(os.getenv("FEISHU_APP_ID"))),
@@ -183,6 +187,68 @@ def cmd_diagnose(args: argparse.Namespace) -> int:
         print("doctor:")
         return cmd_doctor(argparse.Namespace())
     return 0
+
+
+def _field_text(value: object) -> str:
+    if value is None:
+        return "-"
+    text = str(value).replace("\n", " ").strip()
+    return text or "-"
+
+
+def _print_record_diagnosis(record_id: str, limit: int) -> None:
+    print(f"record: {record_id}")
+    try:
+        rec = _load_record(record_id)
+    except SystemExit as exc:
+        print(f"  WARN {exc}")
+        return
+    fields = rec["fields"]
+    for label, key in (
+        ("title", C.F_TITLE),
+        ("status", C.F_STATUS),
+        ("workspace", C.F_WORKSPACE),
+        ("fails", C.F_FAILS),
+        ("link", C.F_LINK),
+        ("chat", C.F_CHAT),
+    ):
+        print(f"  {label}: {_field_text(fields.get(key))}")
+    agent = fields.get(C.F_AGENT) or "-"
+    print(
+        "  agents: "
+        f"default={agent} clarify={fields.get(C.F_AGENT_CLARIFY) or '-'} "
+        f"code={fields.get(C.F_AGENT_CODE) or '-'} review={fields.get(C.F_AGENT_REVIEW) or '-'}"
+    )
+    log_lines = [line.strip() for line in (fields.get(C.F_LOG) or "").splitlines() if line.strip()]
+    if log_lines:
+        print("  recent log:")
+        for line in log_lines[-min(limit, 5):]:
+            print(f"    {line[:220]}")
+    run_rows = [row for row in runs.list_runs(limit=200) if row.get("record_id") == record_id]
+    if run_rows:
+        print("  local run:")
+        for row in run_rows[:limit]:
+            retry = f" next_retry={health.age_text(row['next_retry_at'])}" if row.get("next_retry_at") else ""
+            print(
+                f"    {row['state']} stage={row['stage']} status={row['status']} "
+                f"attempts={row['attempts']} updated={health.age_text(row['updated_at'])}{retry}"
+            )
+            if row.get("last_error"):
+                print(f"      error: {str(row['last_error'])[:220]}")
+    else:
+        print("  local run: none")
+    event_rows = runs.events(record_id=record_id, limit=limit)
+    if event_rows:
+        print("  run events:")
+        for row in event_rows:
+            arrow = ""
+            if row.get("status_from") or row.get("status_to"):
+                arrow = f" {row.get('status_from') or '-'}->{row.get('status_to') or '-'}"
+            print(f"    #{row['id']} {health.age_text(row['created_at'])} {row['event']}{arrow}")
+            if row.get("message"):
+                print(f"      {str(row['message'])[:220]}")
+    else:
+        print("  run events: none")
 
 
 def _fmt_time(ts: float | int | None) -> str:
@@ -394,6 +460,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status").set_defaults(func=cmd_status)
     p_diagnose = sub.add_parser("diagnose")
+    p_diagnose.add_argument("record_id", nargs="?")
     p_diagnose.add_argument("-n", "--limit", type=int, default=5)
     p_diagnose.add_argument("--doctor", action="store_true", help="also run doctor.py")
     p_diagnose.set_defaults(func=cmd_diagnose)

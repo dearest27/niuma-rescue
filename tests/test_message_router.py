@@ -116,6 +116,33 @@ class MessageRouterTest(unittest.TestCase):
         self.assertEqual(len(fake.cards), 1)
         self.assertIn("当前需求", fake.cards[0][1]["header"]["title"]["content"])
 
+    def test_diagnose_command_sends_record_summary(self) -> None:
+        fake = FakeLark([
+            {
+                "record_id": "rec_1",
+                "fields": {
+                    C.F_CHAT: "oc_1",
+                    C.F_STATUS: C.S_BLOCKED,
+                    C.F_TITLE: "修复登录按钮",
+                    C.F_LOG: "旧日志\nreview 未通过",
+                    C.F_FAILS: 2,
+                },
+            }
+        ])
+        message_router.lark = fake
+
+        handled = message_router.handle_message({
+            "message_type": "text",
+            "chat_id": "oc_1",
+            "sender_id": "ou_1",
+            "content": "诊断",
+        })
+
+        self.assertFalse(handled)
+        self.assertEqual(len(fake.sent), 1)
+        self.assertIn("需求诊断", fake.sent[0][1])
+        self.assertIn("review 未通过", fake.sent[0][1])
+
     def test_answer_to_waiting_record_returns_to_clarify(self) -> None:
         fake = FakeLark([
             {
