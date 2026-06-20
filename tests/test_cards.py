@@ -67,5 +67,68 @@ class CardsTest(unittest.TestCase):
         self.assertFalse(any(element.get("tag") == "action" for element in card["elements"]))
 
 
+def board_rec(rid: str, status: str, title: str, fails: int = 0, log: str = "") -> dict:
+    return {"record_id": rid, "fields": {
+        C.F_TITLE: title, C.F_STATUS: status, C.F_FAILS: fails, C.F_LOG: log,
+    }}
+
+
+class BoardCardTest(unittest.TestCase):
+    def _records(self) -> list[dict]:
+        return [
+            board_rec("r_done", C.S_DONE, "已完成的"),
+            board_rec("r_dev", C.S_DEV, "正在开发的"),
+            board_rec("r_blocked", C.S_BLOCKED, "卡住的", fails=2, log="第一行\n测试未通过: lint 报错 → 已阻塞"),
+            board_rec("r_confirm", C.S_CONFIRM, "等确认的"),
+        ]
+
+    def test_excludes_done_and_orders_attention_first(self) -> None:
+        card = cards.board_card(self._records())
+        # 完成的不进看板；阻塞排最前、待确认其次、开发中靠后
+        self.assertIn("3 条在途", card["header"]["title"]["content"])
+        joined = "\n".join(e.get("text", {}).get("content", "") for e in card["elements"] if e.get("tag") == "div")
+        self.assertNotIn("已完成的", joined)
+        self.assertLess(joined.index("卡住的"), joined.index("等确认的"))
+        self.assertLess(joined.index("等确认的"), joined.index("正在开发的"))
+
+    def test_blocked_row_shows_last_log_and_recovery_buttons(self) -> None:
+        card = cards.board_card(self._records())
+        joined = "\n".join(e.get("text", {}).get("content", "") for e in card["elements"] if e.get("tag") == "div")
+        self.assertIn("lint 报错", joined)            # 最后一行日志 = 最后发生了什么
+        self.assertNotIn("第一行", joined)             # 只取最后一行
+        actions = [a for e in card["elements"] if e.get("tag") == "action" for a in e["actions"]]
+        vals = [(a["value"]["action"], a["value"]["record_id"]) for a in actions]
+        self.assertIn(("unblock_dev", "r_blocked"), vals)
+        self.assertIn(("confirm", "r_confirm"), vals)   # 按钮自带各自 record_id
+
+    def test_empty_board_when_all_done(self) -> None:
+        card = cards.board_card([board_rec("r1", C.S_DONE, "x")])
+        self.assertIn("无在途需求", card["header"]["title"]["content"])
+
+    def test_board_text_fallback(self) -> None:
+        text = cards.board_text(self._records())
+        self.assertIn("3 条在途", text)
+        self.assertIn("卡住的", text)
+        self.assertNotIn("已完成的", text)
+
+
+class BlockedAndStatusLogTest(unittest.TestCase):
+    def test_blocked_card_shows_reason_and_recovery_buttons(self) -> None:
+        r = board_rec("rb", C.S_BLOCKED, "卡住的", fails=2, log="老日志\n测试未通过: lint 报错")
+        card = cards.blocked_card(r, "测试未通过: lint 报错")
+        self.assertEqual(card["header"]["template"], "red")
+        joined = "\n".join(e.get("text", {}).get("content", "") for e in card["elements"] if e.get("tag") == "div")
+        self.assertIn("lint 报错", joined)
+        actions = [a["value"]["action"] for e in card["elements"] if e.get("tag") == "action" for a in e["actions"]]
+        self.assertIn("unblock_dev", actions)
+        self.assertIn("clear_lock", actions)
+
+    def test_status_card_includes_recent_log(self) -> None:
+        r = board_rec("rs", C.S_DEV, "开发中的", log="很久以前\n最近一条日志在这")
+        card = cards.status_card(r)
+        joined = "\n".join(e.get("text", {}).get("content", "") for e in card["elements"] if e.get("tag") == "div")
+        self.assertIn("最近一条日志在这", joined)
+
+
 if __name__ == "__main__":
     unittest.main()

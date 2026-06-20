@@ -4,6 +4,7 @@ import re
 
 import cards
 import config as C
+import health
 import lark
 import ops
 import workspaces
@@ -93,7 +94,9 @@ def append_clarify(rec: dict, answer: str) -> None:
 
 
 _COMMAND_HELP = """可用指令：
-状态
+看板（所有在途需求一览）
+状态（当前会话的需求）
+统计 / 周报（运行报表）
 重试
 清锁
 解除阻塞 [待澄清|开发中|Review中]
@@ -139,6 +142,15 @@ def handle_command(text: str, chat_id: str, records: list[dict]) -> bool | None:
     lower = normalized.lower()
     if normalized in {"指令", "帮助", "help", "/help"}:
         lark.send_text(chat_id, _COMMAND_HELP)
+        return False
+    if normalized in {"看板", "全部", "board", "/board"}:
+        _send_card_or_text(chat_id, cards.board_card(records), cards.board_text(records))
+        return False
+    if normalized in {"统计", "报表", "stats"}:
+        lark.send_text(chat_id, health.summary_text(24))
+        return False
+    if normalized in {"周报", "weekly"}:
+        lark.send_text(chat_id, health.summary_text(168))
         return False
     if normalized == "状态":
         rec = _active_record(records, chat_id)

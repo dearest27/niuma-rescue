@@ -88,6 +88,77 @@ def tail_events(limit: int = 20) -> list[dict[str, Any]]:
     return events
 
 
+def _read_events(max_lines: int = 20000) -> list[dict[str, Any]]:
+    """读取 events.jsonl（尾部 max_lines 行，防止文件过大）。"""
+    try:
+        lines = EVENTS_FILE.read_text(encoding="utf-8").splitlines()[-max_lines:]
+    except Exception:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            out.append(json.loads(line))
+        except Exception:
+            pass
+    return out
+
+
+def summary(hours: float = 24.0, events: list[dict] | None = None, now: float | None = None) -> dict:
+    """从埋点聚合一段时间内的运行情况：agent 调用/耗时、卡死自愈、验收门、状态流转。"""
+    now = _now() if now is None else now
+    cutoff = now - hours * 3600
+    evs = _read_events() if events is None else events
+    evs = [e for e in evs if float(e.get("ts", 0) or 0) >= cutoff]
+
+    done = [e for e in evs if e.get("event") == "agent_done"]
+    durs = [float(e.get("duration", 0) or 0) for e in done]
+    by_engine: dict[str, int] = {}
+    for e in done:
+        eng = e.get("engine") or "?"
+        by_engine[eng] = by_engine.get(eng, 0) + 1
+    gate = [e for e in evs if e.get("event") == "gate_done"]
+    gate_ok = sum(1 for e in gate if e.get("ok"))
+    trans: dict[str, int] = {}
+    for e in evs:
+        if e.get("event") == "transition":
+            to = e.get("to") or "?"
+            trans[to] = trans.get(to, 0) + 1
+    return {
+        "hours": hours,
+        "agent_calls": len(done),
+        "by_engine": by_engine,
+        "avg_duration": round(sum(durs) / len(durs), 1) if durs else 0.0,
+        "total_duration": round(sum(durs)),
+        "inactive_kills": sum(1 for e in evs if e.get("event") == "agent_inactive_kill"),
+        "timeouts": sum(1 for e in evs if e.get("event") == "agent_timeout"),
+        "gate_ok": gate_ok,
+        "gate_fail": len(gate) - gate_ok,
+        "transitions": trans,
+    }
+
+
+def summary_text(hours: float = 24.0, events: list[dict] | None = None, now: float | None = None) -> str:
+    """把 summary() 渲染成飞书可读的纯文本报表。"""
+    s = summary(hours, events=events, now=now)
+    hrs = int(s["hours"])
+    tr = s["transitions"]
+    eng = "、".join(f"{k} {v}" for k, v in s["by_engine"].items()) or "无"
+    mins = s["total_duration"] // 60
+    lines = [
+        f"📊 最近 {hrs}h 运行报表",
+        f"· agent 调用 {s['agent_calls']} 次（{eng}）",
+        f"· 平均耗时 {s['avg_duration']}s · 累计 {mins}m",
+        f"· 卡死自愈 {s['inactive_kills']} 次 · 超时 {s['timeouts']} 次",
+        f"· 验收门 通过 {s['gate_ok']} / 失败 {s['gate_fail']}",
+    ]
+    if tr:
+        done = tr.get("完成", 0)
+        blocked = tr.get("已阻塞", 0)
+        review = tr.get("Review中", 0)
+        lines.append(f"· 流转：完成 {done} · 阻塞 {blocked} · 进入Review {review}")
+    return "\n".join(lines)
+
+
 def age_text(ts: float | int | None) -> str:
     if not ts:
         return "unknown"

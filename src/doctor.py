@@ -52,7 +52,28 @@ def _check_scm_workspace(ws: workspaces.Workspace) -> None:
             check(r.returncode == 0, f"{ws.key}: glab 已登录", f"{ws.key}: glab 未登录（glab auth login）", fatal=False)
 
 
+def _agent_login_probe() -> None:
+    """--deep：真正各跑一次极短调用，验证 agent 不只是装了、而是已登录可用。
+    这是上手第一大坑——CLI 在 PATH 里但没登录，每次跑都 auth 失败。"""
+    print("== Agent 登录探测（--deep，会各跑一次极短调用）==")
+    import agent_adapters
+    repo = os.getenv("PIPELINE_REPO_PATH") or "."
+    cwd = Path(repo) if Path(repo).exists() else Path(".")
+    for eng in sorted({C.ENGINE_CLARIFY, C.ENGINE_CODE, C.ENGINE_REVIEW}):
+        binary = C.AGENT_CMDS.get(eng, [eng])[0]
+        if not shutil.which(binary):
+            check(False, "", f"{eng}（{binary}）未安装，跳过", fatal=False)
+            continue
+        try:
+            r = agent_adapters.run_agent(eng, "只回复两个字：就绪", cwd, timeout=90)
+            check(r.ok, f"{eng} 调用成功（已登录可用）",
+                  f"{eng} 调用失败（多半没登录或没额度）：{(r.output or '')[:160]}", fatal=False)
+        except Exception as e:
+            check(False, "", f"{eng} 探测异常：{e}", fatal=False)
+
+
 def main() -> None:
+    deep = "--deep" in sys.argv
     print("== 飞书凭据 ==")
     creds = bool(os.getenv("FEISHU_APP_ID") and os.getenv("FEISHU_APP_SECRET"))
     hermes_creds = _hermes_env_has("FEISHU_APP_ID") and _hermes_env_has("FEISHU_APP_SECRET")
@@ -120,10 +141,17 @@ def main() -> None:
         has_lark_oapi = False
     check(has_lark_oapi, "lark-oapi 已安装", "缺 lark-oapi（pip install -r requirements.txt）", fatal=False)
 
+    if deep:
+        print()
+        _agent_login_probe()
+
     print()
     if _fail:
-        sys.exit(f"✗ {_fail} 项必需检查未通过，修复后再跑。")
+        sys.exit(f"✗ {_fail} 项必需检查未通过。按上面 ✗ 项修复；"
+                 f"飞书/Base 配置见 docs/feishu-app-setup.md，agent 见 docs/agent-cli-setup.md。")
     print("✓ 自检通过，可以启动 src/listener.py + src/dispatcher.py。")
+    if not deep:
+        print("  提示：再跑 `doctor.py --deep` 可实测 agent 是否已登录可用（各跑一次极短调用）。")
 
 
 if __name__ == "__main__":

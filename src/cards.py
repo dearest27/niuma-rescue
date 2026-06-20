@@ -19,6 +19,18 @@ TEMPLATE_STATUS = {
     C.S_BLOCKED: "red",
 }
 
+STATUS_EMOJI = {
+    C.S_CLARIFY: "🔍", C.S_ANSWER: "💬", C.S_CONFIRM: "📋",
+    C.S_DEV: "🔧", C.S_REVIEW: "🔎", C.S_MERGE: "🚀",
+    C.S_DONE: "✔️", C.S_BLOCKED: "🚫",
+}
+
+# 看板排序：需要你处理的（阻塞 / 待确认 / 待合并 / 待回答）排前面，机器在跑的靠后。
+_BOARD_ORDER = {
+    C.S_BLOCKED: 0, C.S_CONFIRM: 1, C.S_MERGE: 2, C.S_ANSWER: 3,
+    C.S_CLARIFY: 4, C.S_DEV: 5, C.S_REVIEW: 6,
+}
+
 
 def _button(text: str, action: str, record_id: str, btn_type: str = "primary") -> dict:
     return {
@@ -134,11 +146,39 @@ def status_card(rec: dict) -> dict:
         ),
         _md(f"**链接**\n{_link_text(f.get(C.F_LINK))}"),
     ]
+    tail = _log_tail(f, 3)
+    if tail:
+        elements.append(_md(f"**最近日志**\n<font color='grey'>{_trunc(tail, 400)}</font>"))
     if actions:
         elements.append(_action_row(actions))
     return {
         "config": {"wide_screen_mode": True},
         "header": _header(f"当前需求：{_title(rec)}", status),
+        "elements": elements,
+    }
+
+
+def blocked_card(rec: dict, reason: str = "") -> dict:
+    """已阻塞主动告警卡片：原因 + 最近日志 + 一键恢复按钮。"""
+    f = _record_fields(rec)
+    rid = rec.get("record_id", "")
+    elements = [
+        _fields(("状态", C.S_BLOCKED), ("失败次数", f.get(C.F_FAILS) or 0),
+                ("工作区", f.get(C.F_WORKSPACE) or "默认")),
+        _md(f"**阻塞原因**\n{_trunc(reason or _last_log(f) or '（无）', 600)}"),
+    ]
+    tail = _log_tail(f, 4)
+    if tail:
+        elements.append(_md(f"**最近日志**\n<font color='grey'>{_trunc(tail, 500)}</font>"))
+    if rid:
+        elements.append(_action_row([
+            _button("解除阻塞", "unblock_dev", rid),
+            _button("重新澄清", "restart_clarify", rid, "default"),
+            _button("清锁", "clear_lock", rid, "default"),
+        ]))
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": _header(f"🚫 需求已阻塞：{_title(rec)}", C.S_BLOCKED, "red"),
         "elements": elements,
     }
 
@@ -182,6 +222,114 @@ def merge_card(rec: dict) -> dict:
             _md("合并或确认提交后，点击下面按钮收尾。"),
             _action_row([_button("已合并 / 完成", "done", rid)]),
         ],
+    }
+
+
+def progress_card(title: str, stage: str, engine: str, stats: dict, status: str | None = None) -> dict:
+    """运行中实时进度卡片（原地更新，不刷屏）。stats 来自 agent 流式回调。"""
+    elapsed = stats.get("elapsed", 0)
+    mins, secs = divmod(int(elapsed), 60)
+    used = f"{mins}m{secs:02d}s" if mins else f"{secs}s"
+    line = f"⏱ 已用 {used}　·　🛠 {stats.get('tool_calls', 0)} 次工具调用"
+    if stats.get("thinking"):
+        line += f"　·　💭 思考 {stats['thinking']}"
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": _header(f"运行中：{title}", status, "turquoise"),
+        "elements": [
+            _fields(("阶段", stage), ("Agent", engine)),
+            _md(line),
+            _md("_实时进度，完成后会自动更新结果。_"),
+        ],
+    }
+
+
+def _last_log(f: dict) -> str:
+    """执行日志的最后一行 = 这条需求"最后发生了什么"。"""
+    log = (f.get(C.F_LOG) or "").strip()
+    return log.splitlines()[-1].strip() if log else ""
+
+
+def _log_tail(f: dict, n: int = 3) -> str:
+    """执行日志最后 n 个非空行，用于"失败可解释"展示。"""
+    log = (f.get(C.F_LOG) or "").strip()
+    if not log:
+        return ""
+    lines = [ln for ln in log.splitlines() if ln.strip()]
+    return "\n".join(lines[-n:])
+
+
+def _board_actions(status: str, rid: str) -> list[dict]:
+    """看板里"需要你处理"的状态带上按钮，按钮自带 record_id → 可操作任意指定那条。"""
+    if status == C.S_BLOCKED:
+        return [_button("解除阻塞", "unblock_dev", rid),
+                _button("重试", "retry", rid, "default"),
+                _button("清锁", "clear_lock", rid, "default")]
+    if status == C.S_CONFIRM:
+        return [_button("确认开发", "confirm", rid)]
+    if status == C.S_MERGE:
+        return [_button("已合并 / 完成", "done", rid)]
+    return []
+
+
+def _in_flight(records: list[dict]) -> list[dict]:
+    flight = [r for r in records if _record_fields(r).get(C.F_STATUS) != C.S_DONE]
+    return sorted(flight, key=lambda r: _BOARD_ORDER.get(_record_fields(r).get(C.F_STATUS), 9))
+
+
+def board_text(records: list[dict]) -> str:
+    """看板的纯文本兜底（卡片发送失败时用）。"""
+    flight = _in_flight(records)
+    if not flight:
+        return "需求看板：当前没有进行中的需求。"
+    lines = [f"需求看板 · {len(flight)} 条在途："]
+    for r in flight:
+        f = _record_fields(r)
+        status = f.get(C.F_STATUS) or "-"
+        title = f.get(C.F_TITLE) or f.get(C.F_DESC) or r.get("record_id", "")
+        fails = int(f.get(C.F_FAILS) or 0)
+        mark = f"（失败{fails}）" if fails else ""
+        lines.append(f"· {STATUS_EMOJI.get(status, '•')} {status}{mark} | {title}")
+    return "\n".join(lines)
+
+
+def board_card(records: list[dict]) -> dict:
+    """需求看板：所有在途需求一览（状态/失败次数/最后日志），需处理项带操作按钮。"""
+    flight = _in_flight(records)
+    if not flight:
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": _header("需求看板 · 无在途需求", template="grey"),
+            "elements": [_md("当前没有进行中的需求。发「需求@cursor：…」开一条。")],
+        }
+    counts: dict[str, int] = {}
+    for r in flight:
+        s = _record_fields(r).get(C.F_STATUS) or "-"
+        counts[s] = counts.get(s, 0) + 1
+    summary = "　·　".join(f"{STATUS_EMOJI.get(s, '')}{s} {n}" for s, n in counts.items())
+    elements: list[dict] = [_md(summary), {"tag": "hr"}]
+    for r in flight:
+        f = _record_fields(r)
+        rid = r.get("record_id", "")
+        status = f.get(C.F_STATUS) or "-"
+        title = f.get(C.F_TITLE) or f.get(C.F_DESC) or rid
+        fails = int(f.get(C.F_FAILS) or 0)
+        mark = f"　·　❌ 失败 {fails}" if fails else ""
+        row = f"{STATUS_EMOJI.get(status, '•')} **{_trunc(title, 60)}** — {status}{mark}"
+        last = _last_log(f)
+        if last:
+            row += f"\n<font color='grey'>{_trunc(last, 120)}</font>"
+        elements.append(_md(row))
+        acts = _board_actions(status, rid)
+        if acts:
+            elements.append(_action_row(acts))
+        elements.append({"tag": "hr"})
+    if elements and elements[-1].get("tag") == "hr":
+        elements.pop()
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": _header(f"需求看板 · {len(flight)} 条在途", template="blue"),
+        "elements": elements,
     }
 
 

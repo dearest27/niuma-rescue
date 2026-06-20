@@ -70,3 +70,16 @@ python src/doctor.py
 ```
 
 3. 观察多维表格是否新增记录，状态是否进入 `待澄清`、`待确认` 或 `待回答`。
+
+## 常见翻车点
+
+| 症状 | 多半原因 | 处理 |
+|---|---|---|
+| 每次调用 agent 都失败 / auth 报错 | agent CLI **装了但没登录** | `cursor-agent login`（或对应 CLI 登录）；`python src/doctor.py --deep` 实测 |
+| 终端能跑 agent，常驻服务里报"找不到命令" | 服务进程 PATH 比终端干净 | 检查服务 PATH；重跑 `install.sh` 让它重新探测写入；见 [agent-cli-setup](agent-cli-setup.md) |
+| 飞书发消息没反应 / 事件像被吞了 | 同一个 app 同时开了 Hermes gateway，两个长连接抢事件 | 停掉 Hermes gateway，只留 `listener` |
+| doctor 报"缺核心字段" | Base 表结构不全 | 重跑 `python src/bootstrap.py`（已有表会跳过，加 `--force` 另建） |
+| 需求卡在澄清反复打转 | 在 `待回答` 状态发了"确认"被当成澄清答案 | 先回答澄清问题，或等它产出 PRD 进 `待确认` 再确认 |
+| 看不清现在在跑什么 / 卡哪了 | —— | 飞书发 `看板`（全部在途）、`状态`（当前会话）、`统计`（运行报表） |
+
+> agent 偶发卡死已内置自愈：无输出超过 `PIPELINE_INACTIVITY_TIMEOUT`（默认 120s）会自动杀掉重试，无需手动干预。

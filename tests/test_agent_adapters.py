@@ -46,5 +46,52 @@ class AgentAdapterTest(unittest.TestCase):
             os.environ.update(old)
 
 
+class CursorStreamTest(unittest.TestCase):
+    def _feed(self, lines, tag="out"):
+        s = agent_adapters._CursorStream()
+        for ln in lines:
+            s.feed(tag, ln)
+        return s
+
+    def test_result_event_is_final_text(self) -> None:
+        s = self._feed([
+            '{"type":"system","subtype":"init"}',
+            '{"type":"thinking"}',
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"半句"}]}}',
+            '{"type":"result","subtype":"success","is_error":false,"result":"CLEAR\\nPRD"}',
+        ])
+        self.assertEqual(s.final_text(), "CLEAR\nPRD")
+        self.assertFalse(s.is_error)
+        self.assertEqual(s.thinking, 1)
+
+    def test_falls_back_to_assistant_text_without_result(self) -> None:
+        s = self._feed([
+            '{"type":"assistant","message":{"content":[{"type":"text","text":"答案"}]}}',
+        ])
+        self.assertIsNone(s.is_error)
+        self.assertEqual(s.final_text(), "答案")
+
+    def test_counts_tool_calls_started_only(self) -> None:
+        s = self._feed([
+            '{"type":"tool_call","subtype":"started"}',
+            '{"type":"tool_call","subtype":"completed"}',
+            '{"type":"tool_call","subtype":"started"}',
+        ])
+        self.assertEqual(s.tool_calls, 2)
+        self.assertEqual(s.progress()["tool_calls"], 2)
+
+    def test_stderr_and_nonjson_lines_are_tolerated(self) -> None:
+        s = agent_adapters._CursorStream()
+        s.feed("err", "Error: [aborted] socket disconnected")
+        s.feed("out", "plain text reply")
+        self.assertIn("socket disconnected", "\n".join(s.error_lines))
+        self.assertEqual(s.final_text(), "plain text reply")
+
+    def test_stream_argv_swaps_output_format(self) -> None:
+        argv = agent_adapters.CursorAdapter("cursor").stream_argv()
+        self.assertIn("stream-json", argv)
+        self.assertNotIn("text", argv)
+
+
 if __name__ == "__main__":
     unittest.main()

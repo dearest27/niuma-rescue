@@ -120,12 +120,19 @@ def send_text(chat_id: str, text: str) -> None:
     _api("POST", f"/open-apis/im/v1/messages?{query}", payload)
 
 
-def send_card(chat_id: str, card: dict) -> None:
-    """给指定会话发一张交互卡片（含按钮）。card 是飞书卡片 JSON（dict）。"""
+def send_card(chat_id: str, card: dict) -> str | None:
+    """给指定会话发一张交互卡片（含按钮）。返回 message_id（用于后续原地更新）。"""
     query = urlencode({"receive_id_type": "chat_id"})
     payload = {
         "receive_id": chat_id,
         "msg_type": "interactive",
         "content": json.dumps(card, ensure_ascii=False),
     }
-    _api("POST", f"/open-apis/im/v1/messages?{query}", payload)
+    data = _api("POST", f"/open-apis/im/v1/messages?{query}", payload)
+    return data.get("message_id")
+
+
+def patch_card(message_id: str, card: dict) -> None:
+    """原地更新一张已发出的交互卡片（用于实时进度，不刷屏）。"""
+    _api("PATCH", f"/open-apis/im/v1/messages/{message_id}",
+         {"content": json.dumps(card, ensure_ascii=False)})

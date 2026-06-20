@@ -99,6 +99,8 @@ def main() -> None:
     ask("PIPELINE_ENGINE_CLARIFY", "澄清阶段 agent", "cursor")
     ask("PIPELINE_ENGINE_CODE", "开发阶段 agent", "cursor")
     ask("PIPELINE_ENGINE_REVIEW", "Review 阶段 agent", "cursor")
+    print("   ⚠ 务必确认所选 agent 的 CLI 已**登录**（如 `cursor-agent login`）——"
+          "装了但没登录会导致每次调用都失败。第 5 步 `doctor.py --deep` 可实测。")
     print(" · 验收门命令（在 worktree 里跑，exit 0 通过；留空则不设门）")
     ask("PIPELINE_TEST_CMD", "测试/lint 命令，如 npm run lint")
     _ensure_workspaces()
@@ -113,6 +115,8 @@ def main() -> None:
     # 5. 自检
     print("[5/6] 自检 ...")
     sh([str(VPY), "-B", str(SRC / "doctor.py")])
+    if input("  深度自检（实测各 agent 是否已登录可用，会各跑一次极短调用）? [y/N]: ").strip().lower().startswith("y"):
+        sh([str(VPY), "-B", str(SRC / "doctor.py"), "--deep"])
 
     # 6. 常驻服务
     print("[6/6] 常驻服务（listener + dispatcher 需长期跑）")

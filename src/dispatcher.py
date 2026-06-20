@@ -72,6 +72,8 @@ def advance(rec: dict, status: str, log_line: str, **extra) -> None:
        + (f" · 写入 {[k for k in extra]}" if extra else ""))
     lark.update(rec["record_id"], fields)
     f.update(fields)  # 保持内存副本一致
+    health.emit("dispatcher", "transition", record_id=rec["record_id"],
+                **{"from": current, "to": status})  # 供统计/周报
 
 
 def on_failure(rec: dict, msg: str, retry_status: str | None = None) -> None:
@@ -80,8 +82,10 @@ def on_failure(rec: dict, msg: str, retry_status: str | None = None) -> None:
     line = f"[fail#{fails}] {msg}"
     if fails >= C.FAILURE_LIMIT:
         advance(rec, C.S_BLOCKED, line + " → 已阻塞", **{C.F_FAILS: fails})
-        notify(rec["fields"].get(C.F_CHAT),
-               f"⚠️ 需求「{rec['fields'].get(C.F_TITLE) or ''}」已阻塞，需人工介入。\n原因：{msg[:300]}")
+        chat = rec["fields"].get(C.F_CHAT)
+        # 主动告警卡片（原因 + 最近日志 + 一键恢复按钮）；卡片发不出时退回纯文本。
+        notify_card(chat, cards.blocked_card(rec, msg))
+        notify(chat, f"⚠️ 需求「{rec['fields'].get(C.F_TITLE) or ''}」已阻塞，需人工介入。原因：{msg[:200]}")
     elif retry_status and retry_status != rec["fields"].get(C.F_STATUS):
         advance(rec, retry_status, line + f" → 回到{retry_status}", **{C.F_FAILS: fails})
     else:
@@ -159,10 +163,11 @@ def resolve_agent(rec: dict, stage: str, default_engine: str) -> str:
     return engine
 
 
-def run_agent(engine: str, prompt: str, cwd: Path, timeout: int = C.AGENT_TIMEOUT):
-    """调对应引擎的 headless CLI，prompt 走 stdin。返回 (是否成功, 输出文本)。"""
+def run_agent(engine: str, prompt: str, cwd: Path, timeout: int = C.AGENT_TIMEOUT, on_progress=None):
+    """调对应引擎的 headless CLI，prompt 走 stdin。返回 (是否成功, 输出文本)。
+    on_progress：流式引擎（cursor）会随事件回调，用于飞书实时进度卡片。"""
     try:
-        result = agent_adapters.run_agent(engine, prompt, cwd, timeout, log=log)
+        result = agent_adapters.run_agent(engine, prompt, cwd, timeout, log=log, on_progress=on_progress)
     except ValueError as exc:
         return False, str(exc)
     return result.ok, result.output
@@ -195,6 +200,32 @@ def write_dossier(wt: Path, req_id: str, fields: dict) -> Path:
 
 
 # ── 阶段处理器 ───────────────────────────────────────────────────────
+def route_clarify(out: str) -> tuple[str, str]:
+    """从 clarify 输出里稳健识别契约标记，容忍 agent 在 CLEAR/QUESTIONS 前多写少量前言。
+    在前几行里找以 CLEAR/QUESTIONS 开头的行，命中即按它路由、其后为载荷；
+    都没命中 → 当 QUESTIONS（保守交人工）。返回 (verdict, payload)。"""
+    lines = out.strip().splitlines()
+    for i, ln in enumerate(lines[:6]):
+        t = ln.strip().upper()
+        if t.startswith("CLEAR"):
+            return "CLEAR", "\n".join(lines[i + 1:]).strip()
+        if t.startswith("QUESTIONS"):
+            return "QUESTIONS", "\n".join(lines[i + 1:]).strip()
+    return "QUESTIONS", out.strip()
+
+
+def review_verdict(out: str) -> str:
+    """稳健识别 review 的 PASS/FAIL（容忍前面有少量前言行）。取前几行里最先出现的
+    PASS/FAIL 标记；都没命中 → FAIL（保守，不放行未明确通过的改动）。"""
+    for ln in out.strip().splitlines()[:6]:
+        t = ln.strip().upper()
+        if t.startswith("PASS"):
+            return "PASS"
+        if t.startswith("FAIL"):
+            return "FAIL"
+    return "FAIL"
+
+
 def handle_clarify(rec: dict) -> None:
     f = rec["fields"]
     ws = workspace_for(rec)
@@ -203,12 +234,13 @@ def handle_clarify(rec: dict) -> None:
                           clarifications=f.get(C.F_CLARIFY, ""))
     engine = resolve_agent(rec, "clarify", C.ENGINE_CLARIFY)
     notify(f.get(C.F_CHAT), f"🤔 正在澄清需求（{engine} · {ws.key}）…")
-    ok, out = run_agent(engine, prompt, ws.path, timeout=C.TIMEOUT_CLARIFY)
+    prog = make_progress(f.get(C.F_CHAT), _record_title(rec), "澄清", engine)
+    ok, out = run_agent(engine, prompt, ws.path, timeout=C.TIMEOUT_CLARIFY, on_progress=prog)
     if not ok:
         return on_failure(rec, f"clarify({engine}) 调用失败: {out[:300]}")
-    head, _, rest = out.strip().partition("\n")
+    verdict, rest = route_clarify(out)
     chat = f.get(C.F_CHAT)
-    if head.strip().upper().startswith("CLEAR"):
+    if verdict == "CLEAR":
         # 信息充分 → 产出 PRD，转人工确认
         advance(rec, C.S_CONFIRM, f"[clarify:{engine}] 信息充分，PRD 已生成，待人确认",
                 **{C.F_PRD: rest.strip()})
@@ -240,6 +272,35 @@ def notify_card(chat_id: str | None, card: dict) -> None:
         lark.send_card(chat_id, card)
     except Exception as e:
         print(f"[dispatcher] 发卡片失败 chat={chat_id}: {e}", file=sys.stderr)
+
+
+def _record_title(rec: dict) -> str:
+    f = rec.get("fields", rec)
+    return f.get(C.F_TITLE) or f.get(C.F_DESC) or rec.get("record_id", "需求")
+
+
+def make_progress(chat_id: str | None, title: str, stage: str, engine: str):
+    """造一个 on_progress 回调：首个事件发进度卡片，之后每 PROGRESS_INTERVAL 秒原地更新。
+    无 chat / 关闭进度 → 返回 None（agent 侧不触发任何飞书调用）。失败不影响主流程。"""
+    if not chat_id or C.PROGRESS_INTERVAL <= 0:
+        return None
+    st = {"mid": None, "last": 0.0}
+
+    def cb(stats: dict) -> None:
+        now = time.time()
+        if st["mid"] is not None and now - st["last"] < C.PROGRESS_INTERVAL:
+            return
+        try:
+            card = cards.progress_card(title, stage, engine, stats)
+            if st["mid"] is None:
+                st["mid"] = lark.send_card(chat_id, card)
+            else:
+                lark.patch_card(st["mid"], card)
+            st["last"] = now
+        except Exception as e:
+            print(f"[dispatcher] 进度卡片更新失败: {e}", file=sys.stderr)
+
+    return cb
 
 
 def _run_test(path: Path, ws: workspaces.Workspace) -> tuple[int, str]:
@@ -294,7 +355,8 @@ def handle_develop(rec: dict) -> None:
         log(f"  复用已有 change set：{len(changed)} 个文件已相对 {ws.base_ref} 变更")
     else:
         notify(chat, f"🔧 开始开发（{engine}）：写代码 + 跑测试，可能需要几分钟，请稍候…")
-        ok, out = run_agent(engine, prompt, wt, timeout=C.TIMEOUT_CODE)
+        prog = make_progress(chat, _record_title(rec), "开发", engine)
+        ok, out = run_agent(engine, prompt, wt, timeout=C.TIMEOUT_CODE, on_progress=prog)
         if not ok:
             return on_failure(rec, f"coder({engine}) 调用失败: {out[:300]}")
         changed = [x for x in git("diff", "--name-only", f"{ws.base_ref}...HEAD",
@@ -323,10 +385,11 @@ def handle_review(rec: dict) -> None:
     prompt = build_prompt("review", dossier=str(dossier_dir(wt, rid)), diff=diff)
     engine = resolve_agent(rec, "review", C.ENGINE_REVIEW)
     notify(chat, f"🔍 开始 Review（{engine}）：审查改动中…")
-    ok, out = run_agent(engine, prompt, wt, timeout=C.TIMEOUT_REVIEW)
+    prog = make_progress(chat, _record_title(rec), "Review", engine)
+    ok, out = run_agent(engine, prompt, wt, timeout=C.TIMEOUT_REVIEW, on_progress=prog)
     if not ok:
         return on_failure(rec, f"reviewer({engine}) 调用失败: {out[:300]}")
-    if out.strip().split("\n", 1)[0].upper().startswith("PASS"):
+    if review_verdict(out) == "PASS":
         title = rec["fields"].get(C.F_TITLE) or branch
         body = rec["fields"].get(C.F_PRD) or ""
         pub = scm.after_review(ws, wt, branch, title, body)   # git: 建PR/MR；svn: commit

@@ -131,6 +131,11 @@ TIMEOUT_CLARIFY = int(os.getenv("PIPELINE_TIMEOUT_CLARIFY", "600"))    # 澄清 
 TIMEOUT_CODE    = int(os.getenv("PIPELINE_TIMEOUT_CODE", "1800"))      # 开发 30min（够真活、卡住也不拖 2h）
 TIMEOUT_REVIEW  = int(os.getenv("PIPELINE_TIMEOUT_REVIEW", "900"))     # Review 15min
 AGENT_TIMEOUT   = int(os.getenv("PIPELINE_AGENT_TIMEOUT", str(max(TIMEOUT_CLARIFY, TIMEOUT_CODE, TIMEOUT_REVIEW))))  # run_agent 默认上限
+# 卡死看门狗：流式引擎（cursor）多久没有任何输出事件就判定卡死并杀掉重试（秒）。
+# 0 关闭。正常思考间隙约 10s，留足余量默认 120s；偶发静默卡死从此 ~2min 自愈而非干等总超时。
+INACTIVITY_TIMEOUT = int(os.getenv("PIPELINE_INACTIVITY_TIMEOUT", "120"))
+# 飞书实时进度卡片：运行中原地更新一张卡片的最小间隔（秒）。0 关闭进度卡片。
+PROGRESS_INTERVAL = int(os.getenv("PIPELINE_PROGRESS_INTERVAL", "20"))
 EXECUTION_STALE_AFTER = int(os.getenv("PIPELINE_EXECUTION_STALE_AFTER", str(AGENT_TIMEOUT + 600)))  # 认领多久算 stale（可被别人接管）
 RETRY_BASE_DELAY = int(os.getenv("PIPELINE_RETRY_BASE_DELAY", "60"))  # 失败后退避秒数基数
 

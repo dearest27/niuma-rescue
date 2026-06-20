@@ -13,6 +13,9 @@
 - 确认后自动创建/复用独立 worktree，让 Agent 开发
 - 自动运行测试或 lint 验收门
 - 自动进入 Review，并把结果回写飞书
+- 运行中在飞书推送**实时进度卡片**（原地更新，不刷屏）
+- Agent 偶发卡死会**按活跃度自愈**（无输出超时即杀掉重试，不干等总超时）
+- 飞书 `看板` 看全部在途需求、`统计`/`周报` 看运行报表，需求阻塞时**主动告警**
 - 本地 SQLite 记录 inbox、run_id、执行锁、失败原因和重试状态
 - 提供飞书指令和 `pipelinectl` 命令做恢复、重试、清锁、切换 Agent
 
@@ -103,11 +106,20 @@ cursor / claude / codex / gemini
 
 ## 飞书控制指令
 
-在机器人私聊里可以直接操作当前会话最近一条未完成需求：
+**全局观测**（不限于当前会话）：
 
 ```text
-指令
-状态
+看板        # 所有在途需求一览：按"需处理"优先排序，每条显示状态/失败次数/最近一条日志，
+            #   已阻塞/待确认/待合并行自带恢复按钮，可直接操作任意指定那条
+统计        # 最近 24h 运行报表：agent 调用次数/各引擎、平均耗时、卡死自愈、超时、验收门、状态流转
+周报        # 同上，统计窗口为最近 7 天
+指令        # 帮助
+```
+
+**操作当前会话最近一条未完成需求**：
+
+```text
+状态        # 当前需求详情卡片（含「最近日志」段，看清最近发生了什么）+ 恢复按钮
 重试
 清锁
 解除阻塞
@@ -121,6 +133,8 @@ cursor / claude / codex / gemini
 切换工作区 backend-service
 设置状态 开发中
 ```
+
+> 需求进入「已阻塞」时会**主动推一张告警卡片**（阻塞原因 + 最近日志 + 一键恢复按钮），无需手动查询。
 
 ## 运维命令
 
@@ -164,6 +178,13 @@ FEISHU_APP_SECRET=xxx
 PIPELINE_BASE_TOKEN=app_token_xxx
 PIPELINE_TABLE_ID=tblxxx
 PIPELINE_REPO_PATH=/abs/path/to/your/repo
+```
+
+可选调优项（留空用默认，详见 `.env.example`）：
+
+```text
+PIPELINE_INACTIVITY_TIMEOUT=120   # cursor 多久无输出判定卡死并杀掉重试（秒，0 关闭）
+PIPELINE_PROGRESS_INTERVAL=20     # 飞书实时进度卡片原地更新的最小间隔（秒，0 关闭）
 ```
 
 多工作区配置在 `workspaces.json`，交付包提供 `workspaces.example.json`。
