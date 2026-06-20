@@ -11,6 +11,7 @@ class FakeLark:
         self.records = records or []
         self.created: list[dict] = []
         self.sent: list[tuple[str, str]] = []
+        self.cards: list[tuple[str, dict]] = []
         self.updated: list[tuple[str, dict]] = []
 
     def list_records(self) -> list[dict]:
@@ -32,6 +33,9 @@ class FakeLark:
 
     def send_text(self, chat_id: str, text: str) -> None:
         self.sent.append((chat_id, text))
+
+    def send_card(self, chat_id: str, card: dict) -> None:
+        self.cards.append((chat_id, card))
 
 
 class MessageRouterTest(unittest.TestCase):
@@ -66,6 +70,8 @@ class MessageRouterTest(unittest.TestCase):
         self.assertEqual(fields[C.F_AGENT_CLARIFY], "cursor")
         self.assertEqual(fields[C.F_WORKSPACE], "backend-service")
         self.assertEqual(fields[C.F_DESC], "修复登录按钮")
+        self.assertEqual(len(fake.cards), 1)
+        self.assertIn("需求已进入流水线", fake.cards[0][1]["header"]["title"]["content"])
 
         duplicate = message_router.handle_message({
             "message_type": "text",
@@ -76,6 +82,32 @@ class MessageRouterTest(unittest.TestCase):
 
         self.assertFalse(duplicate)
         self.assertEqual(len(fake.created), 1)
+        self.assertEqual(len(fake.cards), 1)
+
+    def test_status_command_sends_status_card(self) -> None:
+        fake = FakeLark([
+            {
+                "record_id": "rec_1",
+                "fields": {
+                    C.F_CHAT: "oc_1",
+                    C.F_STATUS: C.S_DEV,
+                    C.F_TITLE: "修复登录按钮",
+                    C.F_WORKSPACE: "backend-service",
+                },
+            }
+        ])
+        message_router.lark = fake
+
+        handled = message_router.handle_message({
+            "message_type": "text",
+            "chat_id": "oc_1",
+            "sender_id": "ou_1",
+            "content": "状态",
+        })
+
+        self.assertFalse(handled)
+        self.assertEqual(len(fake.cards), 1)
+        self.assertIn("当前需求", fake.cards[0][1]["header"]["title"]["content"])
 
     def test_answer_to_waiting_record_returns_to_clarify(self) -> None:
         fake = FakeLark([

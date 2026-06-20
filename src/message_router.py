@@ -111,6 +111,13 @@ def _send_op_result(chat_id: str, result: ops.OpResult) -> None:
     lark.send_text(chat_id, f"{prefix} {result.message}")
 
 
+def _send_card_or_text(chat_id: str, card: dict, fallback: str) -> None:
+    try:
+        lark.send_card(chat_id, card)
+    except Exception:
+        lark.send_text(chat_id, fallback)
+
+
 def handle_command(text: str, chat_id: str, records: list[dict]) -> bool | None:
     """Return True/False when a command was handled; None means not a command."""
     normalized = re.sub(r"\s+", " ", text.strip())
@@ -124,14 +131,18 @@ def handle_command(text: str, chat_id: str, records: list[dict]) -> bool | None:
             lark.send_text(chat_id, "当前会话没有进行中的需求。")
             return False
         f = rec["fields"]
-        lark.send_text(
-            chat_id,
+        fallback = (
             "当前需求：\n"
             f"标题：{f.get(C.F_TITLE) or rec['record_id']}\n"
             f"状态：{f.get(C.F_STATUS)}\n"
             f"工作区：{f.get(C.F_WORKSPACE) or '-'}\n"
             f"链接：{f.get(C.F_LINK) or '-'}\n"
-            f"失败次数：{f.get(C.F_FAILS) or 0}",
+            f"失败次数：{f.get(C.F_FAILS) or 0}"
+        )
+        _send_card_or_text(
+            chat_id,
+            cards.status_card(rec),
+            fallback,
         )
         return False
 
@@ -196,13 +207,12 @@ def _is_missing_field_error(exc: Exception, field_name: str) -> bool:
     )
 
 
-def _create_requirement(fields: dict, clarify_agent: str | None) -> None:
+def _create_requirement(fields: dict, clarify_agent: str | None) -> dict:
     """Create intake record, falling back when optional agent columns are absent."""
     if clarify_agent:
         fields[C.F_AGENT_CLARIFY] = clarify_agent
     try:
-        lark.create(fields)
-        return
+        return lark.create(fields)
     except Exception as exc:
         if not clarify_agent or not _is_missing_field_error(exc, C.F_AGENT_CLARIFY):
             raise
@@ -211,7 +221,7 @@ def _create_requirement(fields: dict, clarify_agent: str | None) -> None:
     fallback.pop(C.F_AGENT_CLARIFY, None)
     marker = f"【{C.F_AGENT_CLARIFY}】{clarify_agent}"
     fallback[C.F_CLARIFY] = ((fallback.get(C.F_CLARIFY) or "") + "\n" + marker).strip()
-    lark.create(fallback)
+    return lark.create(fallback)
 
 
 def handle_message(msg: dict) -> bool:
@@ -267,14 +277,19 @@ def handle_message(msg: dict) -> bool:
         }
         if workspace_key:
             fields[C.F_WORKSPACE] = workspace_key
-        _create_requirement(fields, clarify_agent)
+        created = _create_requirement(fields, clarify_agent)
         suffix_parts = []
         if clarify_agent:
             suffix_parts.append(f"澄清 Agent：{clarify_agent}")
         if workspace_key:
             suffix_parts.append(f"工作区：{workspace_key}")
         suffix = "（" + "，".join(suffix_parts) + "）" if suffix_parts else ""
-        lark.send_text(chat_id, f"📥 需求已收到{suffix}，我先澄清一下细节，稍等。")
+        card_fields = created.get("fields", fields) if isinstance(created, dict) else fields
+        _send_card_or_text(
+            chat_id,
+            cards.intake_card(card_fields),
+            f"需求已收到{suffix}，我先澄清一下细节，稍等。",
+        )
         return True
 
     lark.send_text(chat_id, "发「需求：<一句话描述>」给我，就能提交一个新需求开始走流水线。")
