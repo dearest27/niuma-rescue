@@ -7,6 +7,7 @@
 - `dispatcher.py` 处理澄清、开发、Review、PR 创建
 - 支持 `cursor/claude/codex/gemini` 作为可选 agent
 - 支持 `需求@agent：xxx` 按需求选择澄清 agent
+- 支持 GitHub/GitLab/SVN 工作区发布适配骨架
 - 支持 bootstrap 自动建 Base 和字段
 - 支持 doctor 部署自检
 - 支持 macOS/Linux `install.sh`

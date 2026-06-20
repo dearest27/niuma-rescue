@@ -40,7 +40,37 @@ def _run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subproc
 
 
 def _is_svn(ws: "workspaces.Workspace") -> bool:
-    return getattr(ws, "scm", "git") == "svn"
+    return getattr(ws, "scm", "git").lower() == "svn"
+
+
+def _target_branch(ws: "workspaces.Workspace") -> str:
+    target = getattr(ws, "target_branch", "") or ""
+    if target:
+        return target
+    return workspaces._target_from_base(getattr(ws, "base_ref", "origin/main"))
+
+
+def _svn_status_entries(work: Path) -> list[tuple[str, str]]:
+    out = _run(["svn", "status"], cwd=work, check=False).stdout
+    entries: list[tuple[str, str]] = []
+    for line in out.splitlines():
+        if not line:
+            continue
+        status = line[:7]
+        path = line[8:].strip() if len(line) > 8 else ""
+        if not path:
+            continue
+        entries.append((status, path))
+    return entries
+
+
+def _svn_stage_changes(work: Path) -> None:
+    """Add unversioned files and schedule missing files for deletion before commit."""
+    for status, path in _svn_status_entries(work):
+        if status.startswith("?"):
+            _run(["svn", "add", "--parents", path], cwd=work, check=False)
+        elif status.startswith("!"):
+            _run(["svn", "delete", path], cwd=work, check=False)
 
 
 # ── 准备工作区 ───────────────────────────────────────────────────────
@@ -65,8 +95,11 @@ def prepare(ws: "workspaces.Workspace", req_id: str, worktree_base: Path) -> Pre
 # ── 算改动文件 ───────────────────────────────────────────────────────
 def changed_files(ws: "workspaces.Workspace", work: Path) -> list[str]:
     if _is_svn(ws):
-        out = _run(["svn", "status"], cwd=work, check=False).stdout
-        return [line[8:].strip() for line in out.splitlines() if line[:1] in {"A", "M", "D", "R"}]
+        changed = []
+        for status, path in _svn_status_entries(work):
+            if any(marker in status for marker in ("A", "M", "D", "R", "?", "!")):
+                changed.append(path)
+        return changed
     out = _run(["git", "diff", "--name-only", f"{ws.base_ref}...HEAD"], cwd=work, check=False).stdout
     return [x for x in out.splitlines() if x.strip()]
 
@@ -126,6 +159,7 @@ def after_review(ws: "workspaces.Workspace", work: Path, branch: str,
     if _is_svn(ws):
         if not ws.push_enabled:
             return PublishResult(True, f"svnwc:{ws.key}", "Review 通过（未启用 svn commit）")
+        _svn_stage_changes(work)
         msg = f"{title}\n\n{body}".strip()[:2000]
         p = _run(["svn", "commit", "-m", msg], cwd=work, check=False)
         if p.returncode != 0:
@@ -137,7 +171,10 @@ def after_review(ws: "workspaces.Workspace", work: Path, branch: str,
     provider = getattr(ws, "pr_provider", "github")
     if provider == "gitlab":
         cmd = ["glab", "mr", "create", "--source-branch", branch,
+               "--target-branch", _target_branch(ws),
                "--title", title, "--description", body, "--yes"]
+        if getattr(ws, "gitlab_repo", ""):
+            cmd += ["--repo", ws.gitlab_repo]
         kind = "MR"
     elif provider == "github":
         cmd = ["gh", "pr", "create", "--head", branch, "--title", title, "--body", body]

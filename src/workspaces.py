@@ -29,6 +29,8 @@ class Workspace:
     pr_enabled: bool = False
     pr_provider: str = "github"   # github | gitlab | none（svn 忽略此项）
     gh_repo: str = ""             # 可选：PR 目标仓库 org/repo（github）
+    gitlab_repo: str = ""         # 可选：MR 目标仓库 group/project（gitlab/glab -R）
+    target_branch: str = ""       # 可选：PR/MR 目标分支，默认从 base_ref 推断
 
     @property
     def safe_key(self) -> str:
@@ -63,7 +65,19 @@ def _fallback_workspace(key: str = "default") -> Workspace:
         code_exts=C.CODE_EXTS,
         push_enabled=C.PUSH_ENABLED,
         pr_enabled=C.PR_ENABLED,
+        target_branch=_target_from_base(C.BASE_REF),
     )
+
+
+def _target_from_base(base_ref: str) -> str:
+    if not base_ref:
+        return "main"
+    value = base_ref.rstrip("/")
+    if value.startswith("refs/heads/"):
+        return value.removeprefix("refs/heads/")
+    if "/" in value and not value.startswith(("http://", "https://", "svn://", "file://")):
+        return value.rsplit("/", 1)[-1]
+    return value
 
 
 def get(key: str | None = None) -> Workspace:
@@ -90,17 +104,24 @@ def get(key: str | None = None) -> Workspace:
         code_exts = tuple(str(x).strip() for x in code_exts_raw if str(x).strip())
     else:
         code_exts = C.CODE_EXTS
+    scm = str(cfg.get("scm") or "git").lower()
+    if scm not in {"git", "svn"}:
+        raise ValueError(f"工作区 `{selected}` 的 scm 只支持 git/svn，当前是 {scm!r}")
+    base_ref = str(cfg.get("base") or C.BASE_REF)
+    target_branch = str(cfg.get("target_branch") or cfg.get("target") or _target_from_base(base_ref))
     return Workspace(
         key=selected,
         path=path,
-        base_ref=str(cfg.get("base") or C.BASE_REF),
-        scm=str(cfg.get("scm") or "git"),
+        base_ref=base_ref,
+        scm=scm,
         test_cmd=str(cfg.get("test_cmd") if cfg.get("test_cmd") is not None else C.TEST_CMD),
         code_exts=code_exts,
         push_enabled=bool(cfg.get("push_enabled", C.PUSH_ENABLED)),
         pr_enabled=bool(cfg.get("pr_enabled", C.PR_ENABLED)),
         pr_provider=str(cfg.get("pr_provider") or "github").lower(),
         gh_repo=str(cfg.get("gh_repo") or C.GH_REPO),
+        gitlab_repo=str(cfg.get("gitlab_repo") or cfg.get("glab_repo") or ""),
+        target_branch=target_branch,
     )
 
 

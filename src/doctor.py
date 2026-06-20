@@ -31,6 +31,27 @@ def _hermes_env_has(key: str) -> bool:
     return p.exists() and any(l.strip().startswith(key + "=") for l in p.read_text().splitlines())
 
 
+def _check_scm_workspace(ws: workspaces.Workspace) -> None:
+    if ws.scm == "svn":
+        check(shutil.which("svn") is not None, f"{ws.key}: svn CLI 已安装", f"{ws.key}: svn CLI 未找到", fatal=False)
+        check(bool(ws.base_ref), f"{ws.key}: SVN base 已配置", f"{ws.key}: 缺少 SVN base URL", fatal=False)
+        return
+
+    check(shutil.which("git") is not None, f"{ws.key}: git CLI 已安装", f"{ws.key}: git CLI 未找到", fatal=False)
+    if ws.path.exists():
+        check((ws.path / ".git").exists(), f"{ws.key}: 是 git 仓库", f"{ws.key}: 不是 git 仓库 {ws.path}", fatal=False)
+    if ws.pr_enabled and ws.pr_provider == "github":
+        gh = shutil.which("gh")
+        if check(gh is not None, f"{ws.key}: gh 已安装", f"{ws.key}: gh 未安装（自动建 GitHub PR 需要）", fatal=False):
+            r = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True)
+            check(r.returncode == 0, f"{ws.key}: gh 已登录", f"{ws.key}: gh 未登录（gh auth login）", fatal=False)
+    if ws.pr_enabled and ws.pr_provider == "gitlab":
+        glab = shutil.which("glab")
+        if check(glab is not None, f"{ws.key}: glab 已安装", f"{ws.key}: glab 未安装（自动建 GitLab MR 需要）", fatal=False):
+            r = subprocess.run(["glab", "auth", "status"], capture_output=True, text=True)
+            check(r.returncode == 0, f"{ws.key}: glab 已登录", f"{ws.key}: glab 未登录（glab auth login）", fatal=False)
+
+
 def main() -> None:
     print("== 飞书凭据 ==")
     creds = bool(os.getenv("FEISHU_APP_ID") and os.getenv("FEISHU_APP_SECRET"))
@@ -62,19 +83,21 @@ def main() -> None:
         check(False, "", "跳过（BASE 未配）", fatal=False)
 
     print("== 工作区 ==")
+    items = []
     try:
         items = workspaces.list_workspaces()
         check(bool(items), f"工作区配置可读（{len(items)} 个）", "workspaces.json 无可用工作区", fatal=False)
         for ws in items:
             check(ws.path.exists(), f"{ws.key}: {ws.path}", f"{ws.key}: 路径不存在 {ws.path}", fatal=False)
+            _check_scm_workspace(ws)
     except Exception as e:
         check(False, "", f"工作区配置异常：{e}", fatal=False)
 
-    print("== 目标仓库 ==")
+    print("== 默认目标仓库 ==")
     if repo:
         p = Path(repo)
         is_git = (p / ".git").exists()
-        check(is_git, f"{repo} 是 git 仓库", f"{repo} 不是 git 仓库")
+        check(is_git, f"{repo} 是 git 仓库", f"{repo} 不是 git 仓库（如果只用 workspaces.json，可忽略）", fatal=False)
         if is_git:
             r = subprocess.run(["git", "-C", repo, "ls-remote", "--heads", "origin", "main"],
                                capture_output=True, text=True)
@@ -86,12 +109,6 @@ def main() -> None:
         binary = C.AGENT_CMDS.get(eng, [eng])[0]
         check(shutil.which(binary) is not None, f"{eng}（{binary}）已安装",
               f"{eng}（{binary}）未找到（PATH 里没有）", fatal=False)
-
-    print("== GitHub gh（建 PR 用）==")
-    gh = shutil.which("gh")
-    if check(gh is not None, "gh 已安装", "gh 未安装（brew install gh）", fatal=False):
-        r = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True)
-        check(r.returncode == 0, "gh 已登录", "gh 未登录（gh auth login）", fatal=False)
 
     print("== 入站 listener ==")
     check((Path(__file__).resolve().parent / "listener.py").exists(),

@@ -4,10 +4,10 @@
 
 - Python 3.10+
 - Git
-- 一个可用的目标代码仓库，且存在 `origin/main`
+- 一个可用的目标代码仓库；Git 默认要求存在 `origin/main`，SVN/GitLab 可通过 `workspaces.json` 配置
 - 飞书自建应用的 `APP_ID` / `APP_SECRET`
 - 至少一个可无头运行的 agent CLI，例如 `cursor-agent`
-- 默认不要求 GitHub CLI；只有设置 `PIPELINE_PR_ENABLED=1` 自动建 GitHub PR 时，才需要安装并登录：`gh auth login`
+- 默认不要求 GitHub/GitLab/SVN CLI 的发布能力；只有开启对应工作区的自动 PR/MR/commit 时，才需要 `gh auth login`、`glab auth login` 或 `svn`
 
 ## macOS / Linux
 

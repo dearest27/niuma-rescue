@@ -128,7 +128,12 @@ def cmd_replay(args: argparse.Namespace) -> int:
 def cmd_workspaces(_: argparse.Namespace) -> int:
     for ws in workspaces.list_workspaces():
         marker = "*" if ws.key == workspaces.get(None).key else " "
-        print(f"{marker} {ws.key}: path={ws.path} scm={ws.scm} base={ws.base_ref} test={ws.test_cmd or '-'}")
+        review = "-"
+        if ws.scm == "git" and ws.pr_enabled:
+            review = f"{ws.pr_provider}->{ws.target_branch or '-'}"
+        elif ws.scm == "svn" and ws.push_enabled:
+            review = "svn commit"
+        print(f"{marker} {ws.key}: path={ws.path} scm={ws.scm} base={ws.base_ref} review={review} test={ws.test_cmd or '-'}")
     return 0
 
 

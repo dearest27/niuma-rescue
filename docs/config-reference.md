@@ -20,11 +20,13 @@ PIPELINE_REPO_PATH
 PIPELINE_REPO_PATH=/abs/path/to/repo
 ```
 
-要求：
+默认 Git 工作区要求：
 
 - 是 git 仓库
 - 有 `origin/main`
 - 当前机器能创建 git worktree
+
+如果主要使用 `workspaces.json` 指定 GitLab/SVN 工作区，`PIPELINE_REPO_PATH` 可以作为默认兜底仓库；实际需求会优先走 `工作区` 字段。
 
 ## 工作区
 
@@ -43,7 +45,7 @@ python3 -B src/pipelinectl.py workspaces
 
 优先级：Base 记录 `工作区` > 消息 `#workspace` 写入的字段 > `workspaces.json.default` > `PIPELINE_REPO_PATH`。
 
-## 发布 / PR
+## 发布 / Review
 
 ```text
 PIPELINE_PUSH_ENABLED=0
@@ -51,7 +53,39 @@ PIPELINE_PR_ENABLED=0
 PIPELINE_GH_REPO=org/repo
 ```
 
-`PIPELINE_PUSH_ENABLED` 控制开发完成后是否自动 `git push`；`PIPELINE_PR_ENABLED` 控制 Review 通过后是否自动创建 GitHub PR。默认关闭时，流水线会把变更保留在本地分支并推进到 `待合并`，适合 GitLab/SVN/本地验证场景。GitLab/SVN 的真正发布动作建议后续接 SCM adapter。
+`PIPELINE_PUSH_ENABLED` 控制开发完成后是否自动发布变更；`PIPELINE_PR_ENABLED` 控制 Review 通过后是否自动创建 GitHub PR / GitLab MR。默认关闭时，流水线会把变更保留在本地分支或 SVN 工作副本并推进到 `待合并`。
+
+GitLab 工作区示例：
+
+```json
+{
+  "path": "/absolute/path/to/gitlab/repo",
+  "scm": "git",
+  "base": "origin/main",
+  "target_branch": "main",
+  "push_enabled": true,
+  "pr_enabled": true,
+  "pr_provider": "gitlab",
+  "gitlab_repo": "group/project",
+  "test_cmd": "npm test"
+}
+```
+
+要求本机已安装并登录 `glab`。如果 `gitlab_repo` 留空，`glab` 会从当前 git remote 推断项目。
+
+SVN 工作区示例：
+
+```json
+{
+  "path": "/absolute/path/to/local/svn-checkout-or-placeholder",
+  "scm": "svn",
+  "base": "https://svn.example.com/repos/project/trunk",
+  "push_enabled": false,
+  "test_cmd": "pytest -q"
+}
+```
+
+SVN 模式会按需求 checkout 独立工作副本。`push_enabled=false` 时 Review 通过后只进入 `待合并`，不提交；改为 `true` 后会在 Review 通过后执行 `svn add/delete/commit`。建议先在测试 SVN 仓库验证。
 
 ## 验收门
 
