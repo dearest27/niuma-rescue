@@ -29,6 +29,7 @@ import cards
 import config as C
 import health
 import lark
+import review_utils
 import runs
 import scm
 import workspaces
@@ -338,9 +339,11 @@ def handle_review(rec: dict) -> None:
         notify_card(chat, cards.merge_card(rec))     # 链接 + 「已合并/完成」按钮
     else:
         # review 未过 → 写回意见、打回开发（失败计数，超限则阻塞）
-        (dossier_dir(wt, rid) / "review.md").write_text(out, encoding="utf-8")
-        notify(chat, f"⚠️ Review 未通过（{engine}），已打回开发重做。")
-        on_failure(rec, "review 未通过，打回开发", retry_status=C.S_DEV)
+        report_path = dossier_dir(wt, rid) / "review.md"
+        report_path.write_text(out, encoding="utf-8")
+        summary = review_utils.review_failure_summary(out, report_path)
+        notify(chat, f"⚠️ Review 未通过（{engine}），已打回开发重做。\n\n{summary}")
+        on_failure(rec, f"review 未通过，打回开发：{summary[:900]}", retry_status=C.S_DEV)
 
 
 HANDLERS = {
