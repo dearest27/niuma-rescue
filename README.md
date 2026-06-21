@@ -1,132 +1,134 @@
-# 牛马自救中心
+# Niuma Rescue
 
-把需求丢进飞书，让 Agent 替你加班。
+Throw requirements into Feishu and let agents take the overtime shift.
 
-`niuma-rescue` 是一个本地优先的多 Agent 研发流程编排器。它用飞书多维表格做需求池和状态面板，用本地常驻服务监听消息，再调度 Cursor、Claude Code、Codex、Gemini 等 CLI Agent 完成需求澄清、开发、测试、Review 和交付流转。
+`niuma-rescue` is a local-first multi-agent engineering workflow orchestrator. It uses Feishu Base as the requirement pool and status board, runs local long-lived services to listen for Feishu messages, and dispatches CLI agents such as Cursor, Claude Code, Codex, and Gemini to clarify requirements, implement changes, run tests, review, and hand off delivery.
 
-## 它能做什么
+## What It Does
 
-- 从飞书私聊机器人收集需求，自动写入多维表格
-- 支持按需求指定 Agent：`需求@cursor：xxx`
-- 支持按需求指定工作区：`需求 #backend-service：xxx`
-- 自动澄清需求，生成 PRD，并等待人工确认
-- 确认后自动创建/复用独立 worktree，让 Agent 开发
-- 自动运行测试或 lint 验收门
-- 自动进入 Review，并把结果回写飞书
-- 运行中在飞书推送**实时进度卡片**（原地更新，不刷屏）
-- Agent 偶发卡死会**按活跃度自愈**（无输出超时即杀掉重试，不干等总超时）
-- 飞书 `看板` 看全部在途需求、`统计`/`周报` 看运行报表，需求阻塞时**主动告警**
-- 本地 SQLite 记录 inbox、run_id、执行锁、失败原因和重试状态
-- 提供飞书指令和 `pipelinectl` 命令做恢复、重试、清锁、切换 Agent
+- Collects requirements from a Feishu bot DM and writes them into Feishu Base.
+- Supports per-requirement agent selection: `需求@cursor：xxx`.
+- Supports per-requirement workspace selection: `需求 #backend-service：xxx`.
+- Clarifies requirements automatically, generates a PRD, and waits for human confirmation.
+- Creates or reuses an isolated worktree after confirmation, then asks an agent to implement the change.
+- Runs a configurable test or lint gate.
+- Moves into review automatically and writes the result back to Feishu.
+- Sends live progress cards in Feishu while agents are running, updating in place instead of spamming messages.
+- Recovers from stuck agents by activity timeout: if an agent produces no output for too long, it is killed and retried.
+- Provides Feishu commands such as `看板`, `统计`, and `周报`; blocked requirements push proactive alert cards.
+- Stores inbox messages, run IDs, execution locks, failure reasons, and retry state in local SQLite.
+- Provides Feishu commands and `pipelinectl` commands for retry, recovery, lock clearing, and agent switching.
 
-## 工作流
+## Workflow
 
 ```text
-飞书 IM
-  -> src/listener.py 长连接收消息
-  -> 本地 inbox.sqlite3 落库，防丢失，可 replay
-  -> src/message_router.py 写入/推进 Base 记录
-  -> src/dispatcher.py 处理待澄清/开发中/Review中
+Feishu IM
+  -> src/listener.py receives messages over a long-lived connection
+  -> local inbox.sqlite3 persists messages for replay and loss prevention
+  -> src/message_router.py creates or advances Feishu Base records
+  -> src/dispatcher.py handles 待澄清 / 开发中 / Review中
   -> Cursor / Claude / Codex / Gemini CLI
-  -> git worktree + 测试门 + Review
-  -> 飞书 Base 状态/日志/通知
+  -> git worktree + test gate + review
+  -> Feishu Base status / logs / notifications
 ```
 
-人工卡点：
+Human checkpoints:
 
 ```text
-待选择   新需求落地后先选澄清 Agent + 工作区，点「开始澄清」才开跑
-待回答   用户在飞书回复补充信息
-待确认   用户回复「确认」后进入开发
-待合并   人工检查本地分支 / PR / MR 后合并
+待选择   choose clarify agent + workspace, then click "开始澄清"
+待回答   the user replies in Feishu with additional information
+待确认   the user replies "确认" to start development
+待合并   a human checks the local branch / PR / MR and merges
 ```
 
-## 快速开始
+## Quick Start
 
-macOS / Linux：
+macOS / Linux:
 
 ```bash
 bash install.sh
 ```
 
-Windows PowerShell：
+Windows PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-安装脚本会完成：
+The installer will:
 
-- 创建 `.venv`
-- 安装 `lark-oapi`、`filelock`
-- 交互写入 `.env`
-- 引导生成 `workspaces.json`（Git / GitLab / SVN）
-- 运行 `src/bootstrap.py` 创建飞书多维表格和字段
-- 运行 `src/doctor.py` 自检
-- 可选注册常驻进程：macOS launchd / Windows 计划任务
+- create `.venv`
+- install `lark-oapi` and `filelock`
+- write `.env` interactively
+- guide you through creating `workspaces.json` for Git, GitLab, or SVN
+- optionally create `fields.json` for existing Feishu Base field mappings
+- create `agents.json` for default agents, CLI commands, and aliases
+- run `src/bootstrap.py` to create the Feishu Base and fields
+- run `src/doctor.py` for self-checks
+- optionally register long-running services: macOS launchd / Windows Task Scheduler
 
-手动启动：
+Manual startup:
 
 ```bash
 .venv/bin/python -B src/listener.py
 .venv/bin/python -B src/dispatcher.py
 ```
 
-Windows：
+Windows:
 
 ```powershell
 .\.venv\Scripts\python.exe -B src\listener.py
 .\.venv\Scripts\python.exe -B src\dispatcher.py
 ```
 
-## 使用方式
+## Usage
 
-在飞书私聊机器人发送：
+Send a message to the Feishu bot:
 
 ```text
 需求@cursor：给 README 增加环境变量说明
 ```
 
-也可以不指定 Agent：
+You can omit the agent:
 
 ```text
 需求：修复登录页按钮样式
 ```
 
-指定工作区：
+Specify a workspace:
 
 ```text
 需求@cursor #frontend-app：新增登录页文档
 ```
 
-支持的 Agent 名称：
+Supported agent names:
 
 ```text
 cursor / claude / codex / gemini
 ```
 
-发完需求后，会先停在 **待选择**：弹出一张配置卡片让你点选**澄清 Agent + 工作区**，
-点「🚀 开始澄清」才会用所选配置在对应工作区开始澄清（内联的 `@agent #workspace`
-会预选好，直接点开始即可；也可回文字「开始澄清」）。
+After intake, the requirement first stops at **待选择**. A configuration card lets you choose the clarify agent and workspace. Click `🚀 开始澄清` to start clarification in the selected workspace. Inline `@agent #workspace` hints are preselected, so you can usually just click start. Text command `开始澄清` is also supported.
 
-## 飞书控制指令
+## Feishu Commands
 
-**全局观测**（不限于当前会话）：
+Global observation commands:
 
 ```text
-看板        # 所有在途需求一览：按"需处理"优先排序，每条显示状态/失败次数/最近一条日志，
-            #   已阻塞/待确认/待合并行自带恢复按钮，可直接操作任意指定那条
-统计        # 最近 24h 运行报表：agent 调用次数/各引擎、平均耗时、卡死自愈、超时、验收门、状态流转
-周报        # 同上，统计窗口为最近 7 天
-指令        # 帮助
+看板        # all in-flight requirements, sorted by "needs attention" first;
+            # blocked / confirmation / merge rows include recovery buttons
+统计        # last 24h runtime report: agent calls, engines, average duration,
+            # stuck-agent recovery, timeouts, test gates, state transitions
+周报        # same report over the last 7 days
+指令        # help
 ```
 
-**操作当前会话最近一条未完成需求**：
+Commands for the latest unfinished requirement in the current chat:
 
 ```text
-状态        # 当前需求详情卡片（含「最近日志」段，看清最近发生了什么）+ 恢复按钮
-配置        # 点按选择执行 Agent / 工作区的交互卡片（待选择 / 待确认时还带开始/确认按钮）
-开始澄清    # 待选择状态下启动澄清（等同点卡片上的「🚀 开始澄清」）
+状态        # current requirement card with recent logs and recovery buttons
+配置        # interactive card for agent / workspace selection
+诊断        # current requirement summary and local deep-diagnose command
+开始澄清    # start clarification from 待选择
 重试
 清锁
 解除阻塞
@@ -141,15 +143,16 @@ cursor / claude / codex / gemini
 设置状态 开发中
 ```
 
-> 推荐用 `配置` 卡片点按选择，比记文字命令更省事；文字命令保留作兜底。
+The `配置` card is usually easier than memorizing text commands. Text commands remain available as a fallback.
 
-> 需求进入「已阻塞」时会**主动推一张告警卡片**（阻塞原因 + 最近日志 + 一键恢复按钮），无需手动查询。
+When a requirement enters `已阻塞`, the bot proactively sends an alert card with the blocking reason, recent logs, and one-click recovery actions.
 
-## 运维命令
+## Operations
 
 ```bash
 python3 -B src/pipelinectl.py status
 python3 -B src/pipelinectl.py diagnose
+python3 -B src/pipelinectl.py diagnose rec_xxx
 python3 -B src/pipelinectl.py logs
 python3 -B src/pipelinectl.py inbox
 python3 -B src/pipelinectl.py runs
@@ -159,14 +162,20 @@ python3 -B src/pipelinectl.py doctor
 python3 -B src/pipelinectl.py restart
 ```
 
-本地 smoke 检查：
+Local smoke checks:
 
 ```bash
 python3 -B tools/smoke.py
 python3 -B tools/smoke.py --feishu --dispatch
 ```
 
-手动恢复：
+Offline flow replay:
+
+```bash
+python3 -B tools/replay_flow.py
+```
+
+Manual recovery:
 
 ```bash
 python3 -B src/pipelinectl.py retry-run rec_xxx --dispatch
@@ -177,9 +186,9 @@ python3 -B src/pipelinectl.py set-agent rec_xxx cursor --stage code
 python3 -B src/pipelinectl.py set-workspace rec_xxx backend-service
 ```
 
-## 配置
+## Configuration
 
-核心配置在 `.env`，可从 `.env.example` 复制：
+Core deployment settings live in `.env`, which can be copied from `.env.example`:
 
 ```text
 FEISHU_APP_ID=cli_xxx
@@ -189,36 +198,40 @@ PIPELINE_TABLE_ID=tblxxx
 PIPELINE_REPO_PATH=/abs/path/to/your/repo
 ```
 
-可选调优项（留空用默认，详见 `.env.example`）：
+Optional runtime tuning:
 
 ```text
-PIPELINE_INACTIVITY_TIMEOUT=120   # cursor 多久无输出判定卡死并杀掉重试（秒，0 关闭）
-PIPELINE_PROGRESS_INTERVAL=20     # 飞书实时进度卡片原地更新的最小间隔（秒，0 关闭）
+PIPELINE_INACTIVITY_TIMEOUT=120   # seconds without cursor output before killing and retrying; 0 disables
+PIPELINE_PROGRESS_INTERVAL=20     # minimum interval, in seconds, for in-place Feishu progress card updates
 ```
 
-配置分层：
+Configuration layers:
 
-- `.env`：飞书凭据、Base token、默认仓库和运行策略
-- `workspaces.json`：多工作区 / GitLab / SVN
-- `fields.json`：已有飞书 Base 的字段名映射
-- `agents.json`：默认 agent、CLI 命令和别名
+- `.env`: Feishu credentials, Base token, default repository, and runtime policy
+- `workspaces.json`: multi-workspace / GitLab / SVN configuration
+- `fields.json`: field-name mapping for an existing Feishu Base
+- `agents.json`: default agents, CLI commands, and aliases
 
-交付包提供 `workspaces.example.json`、`fields.example.json`、`agents.example.json`。
+The release package includes:
 
-## 打包
+- `workspaces.example.json`
+- `fields.example.json`
+- `agents.example.json`
+
+## Packaging
 
 ```bash
 python tools/test.py
 python tools/verify_release.py 0.1.0
 ```
 
-生成：
+Generated artifact:
 
 ```text
 dist/agent-pipeline-v0.1.0.zip
 ```
 
-release zip 会排除：
+The release zip excludes local-only files:
 
 ```text
 .env
@@ -232,15 +245,15 @@ fields.json
 agents.json
 ```
 
-## 文档
+## Documentation
 
-- [快速部署](docs/quickstart.md)
-- [飞书应用配置](docs/feishu-app-setup.md)
-- [配置说明](docs/config-reference.md)
-- [Agent CLI 配置](docs/agent-cli-setup.md)
-- [运维与排错](docs/operations.md)
-- [Windows 安装说明](docs/windows-install.md)
-- [交付与打包清单](docs/delivery.md)
+- [Quickstart](docs/quickstart.md)
+- [Feishu app setup](docs/feishu-app-setup.md)
+- [Configuration reference](docs/config-reference.md)
+- [Agent CLI setup](docs/agent-cli-setup.md)
+- [Operations and troubleshooting](docs/operations.md)
+- [Windows installation](docs/windows-install.md)
+- [Delivery and release checklist](docs/delivery.md)
 
 ## License
 
