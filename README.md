@@ -1,5 +1,7 @@
 # Niuma Rescue
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Throw requirements into Feishu and let agents take the overtime shift.
 
 `niuma-rescue` is a local-first multi-agent engineering workflow orchestrator. It uses Feishu Base as the requirement pool and status board, runs local long-lived services to listen for Feishu messages, and dispatches CLI agents such as Cursor, Claude Code, Codex, and Gemini to clarify requirements, implement changes, run tests, review, and hand off delivery.
