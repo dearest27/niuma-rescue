@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import config as C
 import workspaces
@@ -31,6 +32,23 @@ def _hermes_env_has(key: str) -> bool:
     return p.exists() and any(l.strip().startswith(key + "=") for l in p.read_text().splitlines())
 
 
+def _git_remote_host(path: Path, remote: str = "origin") -> str:
+    r = subprocess.run(
+        ["git", "-C", str(path), "remote", "get-url", remote],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        return ""
+    url = (r.stdout or "").strip()
+    parsed = urlparse(url)
+    if parsed.netloc:
+        return parsed.netloc
+    if "@" in url and ":" in url:
+        return url.split("@", 1)[1].split(":", 1)[0]
+    return ""
+
+
 def _check_scm_workspace(ws: workspaces.Workspace) -> None:
     if ws.scm == "svn":
         check(shutil.which("svn") is not None, f"{ws.key}: svn CLI 已安装", f"{ws.key}: svn CLI 未找到", fatal=False)
@@ -48,7 +66,11 @@ def _check_scm_workspace(ws: workspaces.Workspace) -> None:
     if ws.pr_enabled and ws.pr_provider == "gitlab":
         glab = shutil.which("glab")
         if check(glab is not None, f"{ws.key}: glab 已安装", f"{ws.key}: glab 未安装（自动建 GitLab MR 需要）", fatal=False):
-            r = subprocess.run(["glab", "auth", "status"], capture_output=True, text=True)
+            cmd = ["glab", "auth", "status"]
+            host = _git_remote_host(ws.path)
+            if host:
+                cmd += ["--hostname", host]
+            r = subprocess.run(cmd, capture_output=True, text=True)
             check(r.returncode == 0, f"{ws.key}: glab 已登录", f"{ws.key}: glab 未登录（glab auth login）", fatal=False)
 
 
