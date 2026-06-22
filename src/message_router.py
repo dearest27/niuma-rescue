@@ -128,6 +128,7 @@ _COMMAND_HELP = """可用指令：
 状态（当前会话的需求）
 配置（点按选择 Agent / 工作区）
 统计 / 周报（运行报表）
+健康（服务是否在跑 / 有无卡住）
 诊断（当前需求）
 预览禅道 [数量]（只看，不写入 Base）
 同步禅道 [数量]（从禅道拉 Bug 到 Base）
@@ -238,6 +239,9 @@ def handle_command(text: str, chat_id: str, records: list[dict]) -> bool | None:
             return False
         _send_card_or_text(chat_id, cards.settings_card(rec, _ws_keys()),
                            "回复『切换Agent cursor』或『切换工作区 <key>』来设置。")
+        return False
+    if normalized in {"健康", "系统", "health"}:
+        lark.send_text(chat_id, health.system_health_text())
         return False
     if normalized in {"统计", "报表", "stats"}:
         lark.send_text(chat_id, health.summary_text(24))
@@ -420,10 +424,16 @@ def handle_message(msg: dict) -> bool:
                and r["fields"].get(C.F_STATUS) not in (C.S_DONE, C.S_BLOCKED)
                for r in records):
             return False
+        try:                                     # 即时回执：先让用户知道"收到了"，再做后续
+            lark.send_text(chat_id, "✅ 收到需求，正在准备…")
+        except Exception:
+            pass
+        gated = C.SETUP_GATE
         fields = {
             C.F_TITLE: body[:30],
             C.F_DESC: body,
-            C.F_STATUS: C.S_SETUP,                   # → 待选择：先让人选澄清 Agent + 工作区
+            # 开关：开→待选择(等人选 agent/工作区再开始)；关→待澄清(直接用默认开跑)
+            C.F_STATUS: C.S_SETUP if gated else C.S_CLARIFY,
             C.F_CHAT: chat_id,
             C.F_OWNER: [{"id": sender}] if sender else None,
         }
@@ -433,12 +443,15 @@ def handle_message(msg: dict) -> bool:
             fields[C.F_AGENT] = clarify_agent
         created = lark.create(fields)
         rec = _normalize_created_record(created, fields)
-        _send_card_or_text(
-            chat_id,
-            cards.settings_card(rec, _ws_keys()),
-            "需求已收到。回复『切换Agent <名>』『切换工作区 <key>』选好后回『开始澄清』。",
-        )
-        return False                                 # 等人点「开始澄清」，先不跑 dispatcher
+        if gated:
+            _send_card_or_text(
+                chat_id,
+                cards.settings_card(rec, _ws_keys()),
+                "需求已收到。回复『切换Agent <名>』『切换工作区 <key>』选好后回『开始澄清』。",
+            )
+            return False                             # 等人点「开始澄清」，先不跑 dispatcher
+        lark.send_text(chat_id, "🔍 已收到，正在澄清需求…")
+        return True                                  # 直接进澄清 → 触发 dispatcher
 
     lark.send_text(chat_id, "发「需求：<一句话描述>」给我，就能提交一个新需求开始走流水线。")
     return False

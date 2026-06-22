@@ -47,5 +47,21 @@ class SummaryTest(unittest.TestCase):
         self.assertEqual(s["transitions"], {})
 
 
+class SystemHealthTest(unittest.TestCase):
+    def test_flags_idle_listener_and_fresh_dispatcher(self) -> None:
+        now = 100000.0
+        old = health.read_all
+        health.read_all = lambda: {
+            "listener": {"ts": now - 600, "event": "alive"},       # 600s > 180 → 异常
+            "dispatcher": {"ts": now - 30, "event": "tick_start"},  # 新鲜 → 正常
+        }
+        try:
+            t = health.system_health_text(now=now)
+        finally:
+            health.read_all = old
+        self.assertIn("可能没在跑", t)     # 监听 600s 没动静
+        self.assertIn("✅", t)             # 调度新鲜
+
+
 if __name__ == "__main__":
     unittest.main()

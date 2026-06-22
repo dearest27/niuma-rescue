@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import config as C
+import health
 import workspaces
 
 _fail = 0
@@ -167,6 +168,19 @@ def main() -> None:
     except ImportError:
         has_lark_oapi = False
     check(has_lark_oapi, "lark-oapi 已安装", "缺 lark-oapi（pip install -r requirements.txt）", fatal=False)
+
+    print("== 常驻服务（按 state/*.json 最近活动判断）==")
+    try:
+        h = health.system_health()
+        la, da = h["listener"]["age"], h["dispatcher"]["age"]
+        check(la is not None and la <= 180, "listener 在跑（近 3min 有心跳）",
+              "listener 没在跑或卡住（没起过/已挂；启动 src/listener.py）", fatal=False)
+        check(da is not None and da <= C.POLL_INTERVAL * 2 + 120, "dispatcher 在跑",
+              "dispatcher 没在跑或卡住（没起过/已挂；启动 src/dispatcher.py）", fatal=False)
+        if h["processing"]:
+            check(False, "", f"有 {len(h['processing'])} 个任务在处理中（留意是否卡住，可飞书发「健康」看）", fatal=False)
+    except Exception as e:
+        check(False, "", f"读健康状态失败：{e}", fatal=False)
 
     if deep:
         print()

@@ -125,6 +125,21 @@ class MessageRouterTest(unittest.TestCase):
         ]
         self.assertTrue(any(v.get("record_id") == "rec_1" for v in action_values))
 
+    def test_gate_off_goes_straight_to_clarify(self) -> None:
+        import config as C
+        old = C.SETUP_GATE
+        C.SETUP_GATE = False
+        try:
+            fake = FakeLark()
+            message_router.lark = fake
+            handled = message_router.handle_message({
+                "message_type": "text", "chat_id": "oc_1", "sender_id": "ou_1",
+                "content": "需求：直接开跑别拦我"})
+            self.assertTrue(handled)                       # 直接进澄清 → 触发 dispatch
+            self.assertEqual(fake.created[0][C.F_STATUS], C.S_CLARIFY)
+        finally:
+            C.SETUP_GATE = old
+
     def test_start_clarify_button_moves_setup_to_clarify(self) -> None:
         fake = FakeLark([{"record_id": "rec_1", "fields": {
             C.F_CHAT: "oc_1", C.F_STATUS: C.S_SETUP, C.F_TITLE: "需求X", C.F_AGENT: "cursor"}}])

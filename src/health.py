@@ -159,6 +159,70 @@ def summary_text(hours: float = 24.0, events: list[dict] | None = None, now: flo
     return "\n".join(lines)
 
 
+def system_health(now: float | None = None) -> dict:
+    """部署自查：常驻服务最近活动时间 + 当前在处理(可能卡住)的 run。"""
+    now = _now() if now is None else now
+    states = read_all()
+
+    def info(comp: str) -> dict:
+        s = states.get(comp) or {}
+        ts = float(s.get("ts", 0) or 0)
+        return {"age": (now - ts) if ts else None, "event": s.get("event")}
+
+    res: dict = {"listener": info("listener"), "dispatcher": info("dispatcher")}
+    try:
+        import runs
+        procs = runs.list_runs(limit=50, state="processing")
+        res["processing"] = [
+            {"record_id": r.get("record_id"), "stage": r.get("stage"),
+             "age": round(now - float(r.get("heartbeat_at", 0) or 0))}
+            for r in procs
+        ]
+    except Exception:
+        res["processing"] = []
+    return res
+
+
+def system_health_text(now: float | None = None) -> str:
+    h = system_health(now=now)
+    try:
+        import config as C
+        poll = C.POLL_INTERVAL
+    except Exception:
+        poll = 900
+
+    def line(comp: str, label: str, ok_within: float) -> str:
+        age = h[comp]["age"]
+        if age is None:
+            return f"· {label}：❓ 无活动记录（可能从未启动）"
+        mark = "✅" if age <= ok_within else "⚠️ 可能没在跑"
+        return f"· {label}：{mark} 最近活动 {_dur(age)}前（{h[comp]['event']}）"
+
+    lines = ["🩺 系统健康",
+             line("listener", "监听(收消息)", 180),          # 有 60s 心跳，>3min 没动静=异常
+             line("dispatcher", "调度(跑任务)", poll * 2 + 120)]
+    procs = h["processing"]
+    if procs:
+        lines.append(f"· 正在处理 {len(procs)} 个：" +
+                     "；".join(f"{p['record_id'][:8]}/{p['stage']}({_dur(p['age'])})" for p in procs[:5]))
+    else:
+        lines.append("· 当前无正在处理的任务")
+    return "\n".join(lines)
+
+
+def _dur(seconds: float | int | None) -> str:
+    if seconds is None:
+        return "未知"
+    s = max(0, int(seconds))
+    if s < 60:
+        return f"{s}秒"
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m}分{s:02d}秒"
+    h, m = divmod(m, 60)
+    return f"{h}时{m:02d}分"
+
+
 def age_text(ts: float | int | None) -> str:
     if not ts:
         return "unknown"

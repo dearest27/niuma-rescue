@@ -46,6 +46,22 @@ class AgentAdapterTest(unittest.TestCase):
             os.environ.update(old)
 
 
+class RawSinkTest(unittest.TestCase):
+    def test_stdout_is_answer_stderr_is_error_fallback(self) -> None:
+        s = agent_adapters._RawSink()
+        s.feed("out", "答案第一行\n")
+        s.feed("out", "答案第二行\n")
+        s.feed("err", "some warning\n")
+        self.assertEqual(s.final_text(), "答案第一行\n答案第二行")
+        self.assertIn("some warning", s.error_blob())
+        self.assertIsNone(s.is_error)
+
+    def test_progress_reports_output_len(self) -> None:
+        s = agent_adapters._RawSink()
+        s.feed("out", "abcd")
+        self.assertEqual(s.progress()["output_len"], 4)
+
+
 class CursorStreamTest(unittest.TestCase):
     def _feed(self, lines, tag="out"):
         s = agent_adapters._CursorStream()

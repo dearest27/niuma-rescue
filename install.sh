@@ -200,7 +200,7 @@ if [[ "${svc:-N}" =~ ^[Yy] ]]; then
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.agentpipeline.$s</string>
-  <key>ProgramArguments</key><array><string>$PY</string><string>-B</string><string>$SRC/$s.py</string></array>
+  <key>ProgramArguments</key><array><string>/usr/bin/caffeinate</string><string>-i</string><string>$PY</string><string>-B</string><string>$SRC/$s.py</string></array>
   <key>WorkingDirectory</key><string>$SRC</string>
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>$PATHV</string>

@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from collections import deque
 from pathlib import Path
 
@@ -117,18 +118,10 @@ def _drain_inbox() -> None:
     health.emit("listener", "inbox_drained", processed=processed)
 
 
-def _on_card_action(data):
-    """卡片按钮点击回调：推进状态 + 弹 toast。走同一条 WS 长连接，无需公网 URL。"""
-    from lark_oapi.event.callback.model.p2_card_action_trigger import (
-        P2CardActionTriggerResponse, CallBackToast,
-    )
-    toast_text = "已处理"
+def _handle_card_async(value: dict, message_id) -> None:
+    """卡片点击的重活（list_records/改库/patch/触发 dispatch）放后台线程，
+    绝不阻塞 WS 收包线程——否则 keepalive ping 超时会导致长连接掉线丢消息。"""
     try:
-        ev = getattr(data, "event", None)
-        action = getattr(ev, "action", None) if ev else None
-        value = (getattr(action, "value", None) or {}) if action else {}
-        ctx = getattr(ev, "context", None) if ev else None
-        message_id = getattr(ctx, "open_message_id", None) if ctx else None
         toast_text, should_dispatch, new_card = message_router.handle_card_action(value)
         health.emit("listener", "card_action", value=value, dispatch=should_dispatch)
         print(f"[listener] card_action {value} → {toast_text}", file=sys.stderr)
@@ -140,13 +133,29 @@ def _on_card_action(data):
         if should_dispatch:
             _trigger_dispatch()
     except Exception as e:
+        health.emit("listener", "card_action_async_failed", error=str(e))
+        print(f"[listener] 卡片回调异步异常: {e}", file=sys.stderr)
+
+
+def _on_card_action(data):
+    """卡片按钮点击回调：立刻回 toast，重活异步做。走同一条 WS 长连接，无需公网 URL。"""
+    from lark_oapi.event.callback.model.p2_card_action_trigger import (
+        P2CardActionTriggerResponse, CallBackToast,
+    )
+    try:
+        ev = getattr(data, "event", None)
+        action = getattr(ev, "action", None) if ev else None
+        value = (getattr(action, "value", None) or {}) if action else {}
+        ctx = getattr(ev, "context", None) if ev else None
+        message_id = getattr(ctx, "open_message_id", None) if ctx else None
+        threading.Thread(target=_handle_card_async, args=(value, message_id), daemon=True).start()
+    except Exception as e:
         health.emit("listener", "card_action_failed", error=str(e))
         print(f"[listener] 卡片回调异常: {e}", file=sys.stderr)
-        toast_text = "处理失败"
     resp = P2CardActionTriggerResponse()
     t = CallBackToast()
     t.type = "info"
-    t.content = toast_text
+    t.content = "已收到，处理中…"
     resp.toast = t
     return resp
 
@@ -172,6 +181,20 @@ def main() -> None:
         event_handler=handler,
         log_level=lark.LogLevel.INFO,
     )
+    # 断线重连后补一轮 dispatch：掉线窗口内可能漏了触发，靠它兜底（部分 SDK 版本才有此钩子）。
+    def _on_reconnected() -> None:
+        health.emit("listener", "reconnected")
+        print("[listener] 长连接已重连，补一轮 dispatch 兜底", file=sys.stderr)
+        _trigger_dispatch()
+    if hasattr(client, "on_reconnected"):
+        client.on_reconnected = _on_reconnected
+    # 心跳：每 60s 记一次"还活着"，让 `健康` 命令/doctor 能判断 listener 是否在跑。
+    def _heartbeat() -> None:
+        while True:
+            time.sleep(60)
+            health.emit("listener", "alive")
+    threading.Thread(target=_heartbeat, daemon=True).start()
+
     health.emit("listener", "starting", event_key=C.EVENT_KEY)
     print("[listener] 连接飞书长连接，监听 im.message.receive_v1 …", file=sys.stderr)
     client.start()  # 阻塞常驻；断线自动重连由 SDK 处理

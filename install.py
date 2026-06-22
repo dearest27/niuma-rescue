@@ -232,7 +232,7 @@ def _mac_services() -> None:
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.agentpipeline.{s}</string>
-  <key>ProgramArguments</key><array><string>{VPY}</string><string>-B</string><string>{SRC / (s + '.py')}</string></array>
+  <key>ProgramArguments</key><array><string>/usr/bin/caffeinate</string><string>-i</string><string>{VPY}</string><string>-B</string><string>{SRC / (s + '.py')}</string></array>
   <key>WorkingDirectory</key><string>{SRC}</string>
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>{pathv}</string>
@@ -245,8 +245,9 @@ def _mac_services() -> None:
 """, encoding="utf-8")
         subprocess.run(["launchctl", "unload", str(plist)], capture_output=True)
         subprocess.run(["launchctl", "load", "-w", str(plist)])
-        print(f"  ✓ {s} 服务已装并启动")
+        print(f"  ✓ {s} 服务已装并启动（caffeinate -i 防止待机休眠掉线）")
     print("  注意：装了 hermes 的话别再 hermes gateway start（会和 listener 抢长连接）。")
+    print("  提示：合盖也想跑请 `sudo pmset -a disablesleep 1`，或用台式机/服务器常开。")
 
 
 def _windows_hint() -> None:

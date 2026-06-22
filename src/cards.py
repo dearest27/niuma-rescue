@@ -234,9 +234,13 @@ def progress_card(title: str, stage: str, engine: str, stats: dict, status: str 
     elapsed = stats.get("elapsed", 0)
     mins, secs = divmod(int(elapsed), 60)
     used = f"{mins}m{secs:02d}s" if mins else f"{secs}s"
-    line = f"⏱ 已用 {used}　·　🛠 {stats.get('tool_calls', 0)} 次工具调用"
-    if stats.get("thinking"):
-        line += f"　·　💭 思考 {stats['thinking']}"
+    line = f"⏱ 已用 {used}"
+    if "tool_calls" in stats:                      # cursor 流式：工具调用/思考计数
+        line += f"　·　🛠 {stats.get('tool_calls', 0)} 次工具调用"
+        if stats.get("thinking"):
+            line += f"　·　💭 思考 {stats['thinking']}"
+    elif stats.get("output_len"):                  # 其它引擎：用输出字数体现"在动"
+        line += f"　·　📝 输出 {stats['output_len']} 字"
     return {
         "config": {"wide_screen_mode": True},
         "header": _header(f"运行中：{title}", status, "turquoise"),
@@ -361,7 +365,11 @@ def settings_card(rec: dict, workspace_keys: list[str] | None = None) -> dict:
     status = f.get(C.F_STATUS)
     cur_agent = f.get(C.F_AGENT) or "默认"
     cur_ws = f.get(C.F_WORKSPACE) or "默认"
-    elements: list[dict] = [
+    elements: list[dict] = []
+    if status == C.S_SETUP:                  # 新需求卡点：开头先把"该干嘛"说清楚，避免没人点
+        elements.append(_md("👇 **选好下面的 Agent 和工作区，再点最底部「🚀 开始澄清」**，"
+                            "否则需求会一直停在这里不动。"))
+    elements += [
         _fields(("状态", status or "-"), ("当前 Agent", cur_agent), ("当前工作区", cur_ws)),
         _md("**执行 Agent**（点按即生效，对该需求所有阶段生效）"),
         _action_row([

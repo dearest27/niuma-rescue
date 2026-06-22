@@ -121,6 +121,7 @@ Global observation commands:
 统计        # last 24h runtime report: agent calls, engines, average duration,
             # stuck-agent recovery, timeouts, test gates, state transitions
 周报        # same report over the last 7 days
+健康        # self-check: are listener/dispatcher alive, any stuck runs
 指令        # help
 ```
 

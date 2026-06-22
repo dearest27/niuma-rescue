@@ -202,7 +202,12 @@ AGENT_TIMEOUT   = int(os.getenv("PIPELINE_AGENT_TIMEOUT", str(max(TIMEOUT_CLARIF
 INACTIVITY_TIMEOUT = int(os.getenv("PIPELINE_INACTIVITY_TIMEOUT", "120"))
 # 飞书实时进度卡片：运行中原地更新一张卡片的最小间隔（秒）。0 关闭进度卡片。
 PROGRESS_INTERVAL = int(os.getenv("PIPELINE_PROGRESS_INTERVAL", "20"))
-EXECUTION_STALE_AFTER = int(os.getenv("PIPELINE_EXECUTION_STALE_AFTER", str(AGENT_TIMEOUT + 600)))  # 认领多久算 stale（可被别人接管）
+# 新需求是否先停在「待选择」让人选澄清 Agent/工作区（再点「开始澄清」）。
+# 关掉（=0）则收到需求直接用默认 agent/工作区开跑，最省事——适合单工作区/不想多一步的部署。
+SETUP_GATE = os.getenv("PIPELINE_SETUP_GATE", "1").strip().lower() not in ("0", "false", "no", "off")
+# 认领多久没心跳算 stale、可被重新接管（秒）。全局文件锁已保证同一时刻只有一个 tick 在跑，
+# 所以 stale 只在进程崩溃后才发生 → 设小点让"崩溃残留的卡死记录"快速恢复（默认 10min，原 40min）。
+EXECUTION_STALE_AFTER = int(os.getenv("PIPELINE_EXECUTION_STALE_AFTER", "600"))
 RETRY_BASE_DELAY = int(os.getenv("PIPELINE_RETRY_BASE_DELAY", "60"))  # 失败后退避秒数基数
 
 _AGENTS = _load_json(AGENTS_FILE)
