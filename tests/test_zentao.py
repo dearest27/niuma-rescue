@@ -45,6 +45,16 @@ class ZentaoTest(unittest.TestCase):
         self.assertEqual(zentao._extract_token({"data": {"token": "def"}}), "def")
         self.assertEqual(zentao._extract_token({"access_token": "ghi"}), "ghi")
 
+    def test_normalize_bug_strips_html_steps(self) -> None:
+        bug = zentao.normalize_bug(
+            {"id": 1, "title": "报错", "steps": "<p>现象：失败</p><p><img src=\"x\" alt=\"err.png\" /></p>"},
+            "https://zentao.example.com",
+        )
+
+        self.assertIsNotNone(bug)
+        assert bug is not None
+        self.assertEqual(bug.steps, "现象：失败\n[图片：err.png]")
+
 
 if __name__ == "__main__":
     unittest.main()

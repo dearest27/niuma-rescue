@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import ssl
+from html import unescape
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,6 +35,7 @@ class ZentaoConfig:
     password: str = ""
     password_env: str = "ZENTAO_PASSWORD"
     extra_headers: dict[str, str] | None = None
+    verify_ssl: bool = True
     workspace: str = ""
     agent: str = ""
     dry_run: bool = True
@@ -83,19 +87,26 @@ def load_config(path: str | Path | None = None) -> ZentaoConfig:
         password=str(os.getenv(password_env) or os.getenv("ZENTAO_PASSWORD") or data.get("password") or ""),
         password_env=password_env,
         extra_headers={str(k): str(v) for k, v in dict(data.get("extra_headers") or {}).items()},
+        verify_ssl=bool(data.get("verify_ssl", True)),
         workspace=str(data.get("workspace") or os.getenv("ZENTAO_WORKSPACE") or ""),
         agent=str(data.get("agent") or os.getenv("ZENTAO_AGENT") or ""),
         dry_run=bool(data.get("dry_run", True)),
     )
 
 
-def _json_request(url: str, headers: dict[str, str]) -> Any:
+def _ssl_context(cfg: ZentaoConfig):
+    if cfg.verify_ssl:
+        return None
+    return ssl._create_unverified_context()
+
+
+def _json_request(url: str, headers: dict[str, str], cfg: ZentaoConfig) -> Any:
     req = Request(url, headers=headers, method="GET")
-    with urlopen(req, timeout=60) as resp:
+    with urlopen(req, timeout=60, context=_ssl_context(cfg)) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _json_post(url: str, body: dict[str, Any], headers: dict[str, str] | None = None) -> Any:
+def _json_post(url: str, body: dict[str, Any], cfg: ZentaoConfig, headers: dict[str, str] | None = None) -> Any:
     payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = Request(
         url,
@@ -103,7 +114,7 @@ def _json_post(url: str, body: dict[str, Any], headers: dict[str, str] | None = 
         headers={"Content-Type": "application/json", "Accept": "application/json", **(headers or {})},
         method="POST",
     )
-    with urlopen(req, timeout=60) as resp:
+    with urlopen(req, timeout=60, context=_ssl_context(cfg)) as resp:
         raw = resp.read().decode("utf-8")
     return json.loads(raw) if raw else {}
 
@@ -130,7 +141,7 @@ def obtain_token(cfg: ZentaoConfig) -> str:
     if not (cfg.account and cfg.password):
         return ""
     url = urljoin(cfg.base_url.rstrip("/") + "/", cfg.token_endpoint.lstrip("/"))
-    payload = _json_post(url, {"account": cfg.account, "password": cfg.password})
+    payload = _json_post(url, {"account": cfg.account, "password": cfg.password}, cfg)
     token = _extract_token(payload)
     if not token:
         raise RuntimeError(f"禅道登录成功但响应里没有 token: {payload}")
@@ -180,6 +191,17 @@ def _text(value: Any) -> str:
     return str(value)
 
 
+def _clean_html(text: str) -> str:
+    if not text:
+        return ""
+    text = re.sub(r"(?i)<\s*br\s*/?\s*>", "\n", text)
+    text = re.sub(r"(?i)</\s*p\s*>", "\n", text)
+    text = re.sub(r"(?i)<\s*img[^>]*alt=[\"']([^\"']+)[\"'][^>]*>", r"[图片：\1]", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    lines = [re.sub(r"[ \t]+", " ", unescape(line)).strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line).strip()
+
+
 def _first(raw: dict[str, Any], *keys: str) -> str:
     for key in keys:
         if raw.get(key) not in (None, ""):
@@ -206,7 +228,7 @@ def normalize_bug(raw: dict[str, Any], base_url: str) -> ZentaoBug | None:
         product=_first(raw, "product", "productName"),
         project=_first(raw, "project", "projectName", "execution"),
         module=_first(raw, "module", "moduleName"),
-        steps=_first(raw, "steps", "reproSteps", "desc", "description"),
+        steps=_clean_html(_first(raw, "steps", "reproSteps", "desc", "description")),
         url=url,
         raw=raw,
     )
@@ -218,7 +240,7 @@ def fetch_bugs(cfg: ZentaoConfig) -> list[ZentaoBug]:
     if query:
         endpoint += ("&" if "?" in endpoint else "?") + query
     url = urljoin(cfg.base_url.rstrip("/") + "/", endpoint.lstrip("/"))
-    payload = _json_request(url, _headers(cfg))
+    payload = _json_request(url, _headers(cfg), cfg)
     bugs = [normalize_bug(item, cfg.base_url) for item in _bugs_payload_items(payload)]
     return [bug for bug in bugs if bug is not None]
 

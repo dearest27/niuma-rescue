@@ -124,6 +124,7 @@ cp zentao.example.json zentao.json
   "account_env": "ZENTAO_ACCOUNT",
   "password": "",
   "password_env": "ZENTAO_PASSWORD",
+  "verify_ssl": true,
   "workspace": "backend-service",
   "agent": "",
   "dry_run": true
@@ -142,6 +143,8 @@ export ZENTAO_BASE_URL=https://chandao.yeecoh.com:11180
 export ZENTAO_ACCOUNT=your-account
 export ZENTAO_PASSWORD=your-password
 ```
+
+如果内网禅道使用自签或不完整证书链，Python 可能报 `CERTIFICATE_VERIFY_FAILED`。推荐先安装/信任正确 CA；临时验证时可在本机 `zentao.json` 设置 `"verify_ssl": false`。
 
 先预览：
 
