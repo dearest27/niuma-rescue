@@ -114,14 +114,26 @@ function Ensure-Workspaces {
         if ([string]::IsNullOrWhiteSpace($targetBranch)) {
             $targetBranch = "main"
         }
+        $workMode = (Read-PromptValue "Git 工作区模式 worktree/inline" "worktree").ToLowerInvariant()
+        if ($workMode -in @("inline", "inplace", "in-place", "current", "current_branch")) {
+            $workMode = "inline"
+        } else {
+            $workMode = "worktree"
+        }
         $reviewProvider = (Read-PromptValue "自动创建 Review? none/github/gitlab" "none").ToLowerInvariant()
         $autoReview = $reviewProvider -in @("github", "gitlab")
         if (-not $autoReview) {
             $reviewProvider = "none"
         }
+        if ($workMode -eq "inline") {
+            $autoReview = $false
+            $reviewProvider = "none"
+            Write-Host "  inline 模式会原地修改当前分支，不自动 commit/push/建 PR/MR。"
+        }
         $item = [ordered]@{
             path = $repo
             scm = "git"
+            work_mode = $workMode
             base = $gitBase
             target_branch = $targetBranch
             push_enabled = $autoReview

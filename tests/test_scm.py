@@ -22,6 +22,14 @@ class ScmAdapterTest(unittest.TestCase):
 
         def fake_run(cmd: list[str], cwd: Path | None = None, check: bool = True):
             self.calls.append((cmd, cwd, check))
+            if cmd[:3] == ["git", "branch", "--show-current"]:
+                return cp(cmd, stdout="feature/local\n")
+            if cmd[:3] == ["git", "status", "--porcelain"]:
+                return cp(cmd, stdout=" M changed.py\n?? new.py\nR  old.py -> moved.py\n")
+            if cmd[:3] == ["git", "diff", "HEAD"]:
+                return cp(cmd, stdout="diff --git a/changed.py b/changed.py\n")
+            if cmd[:3] == ["git", "ls-files", "--error-unmatch"]:
+                return cp(cmd, returncode=1 if cmd[-1] == "new.py" else 0)
             if cmd[:2] == ["svn", "status"]:
                 return cp(cmd, stdout="M       changed.py\n?       new.py\n!       gone.py\n")
             if cmd[:3] == ["glab", "mr", "create"]:
@@ -58,6 +66,37 @@ class ScmAdapterTest(unittest.TestCase):
         self.assertIn("release", cmd)
         self.assertIn("--repo", cmd)
         self.assertIn("group/project", cmd)
+
+    def test_inline_git_mode_uses_existing_workspace_without_push_or_mr(self) -> None:
+        ws = workspaces.Workspace(
+            key="inline-app",
+            path=self.work,
+            base_ref="origin/main",
+            scm="git",
+            push_enabled=True,
+            pr_enabled=True,
+            pr_provider="gitlab",
+            gitlab_repo="group/project",
+            work_mode="inline",
+        )
+
+        prepared = scm.prepare(ws, "rec_1", self.work / "worktrees")
+        changed = scm.changed_files(ws, self.work)
+        diff = scm.diff_text(ws, self.work)
+        develop = scm.after_develop(ws, self.work, prepared.branch)
+        review = scm.after_review(ws, self.work, prepared.branch, "Title", "Body")
+
+        self.assertEqual(prepared.work_path, self.work)
+        self.assertEqual(prepared.branch, "feature/local")
+        self.assertEqual(changed, ["changed.py", "new.py", "moved.py"])
+        self.assertIn("Untracked files", diff)
+        self.assertTrue(develop.ok)
+        self.assertIn("未提交/未推送", develop.note)
+        self.assertTrue(review.ok)
+        self.assertIn("待人工提交", review.note)
+        commands = [call[0] for call in self.calls]
+        self.assertFalse(any(cmd[:2] == ["git", "push"] for cmd in commands))
+        self.assertFalse(any(cmd[:3] == ["glab", "mr", "create"] for cmd in commands))
 
     def test_svn_changed_files_includes_unversioned_and_missing_files(self) -> None:
         ws = workspaces.Workspace(

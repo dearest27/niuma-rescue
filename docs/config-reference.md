@@ -100,12 +100,43 @@ PIPELINE_GH_REPO=org/repo
 
 `PIPELINE_PUSH_ENABLED` 控制开发完成后是否自动发布变更；`PIPELINE_PR_ENABLED` 控制 Review 通过后是否自动创建 GitHub PR / GitLab MR。默认关闭时，流水线会把变更保留在本地分支或 SVN 工作副本并推进到 `待合并`。
 
+### Git 工作区模式
+
+Git workspace 默认使用 `work_mode: "worktree"`：每条需求创建独立 worktree 和需求分支，隔离最好，适合自动 push / PR / MR。
+
+大仓库或本地人工控制场景可以使用 `work_mode: "inline"`：
+
+```json
+{
+  "path": "/absolute/path/to/large/repo",
+  "scm": "git",
+  "work_mode": "inline",
+  "base": "origin/main",
+  "push_enabled": false,
+  "pr_enabled": false,
+  "test_cmd": ""
+}
+```
+
+inline 模式会直接在 `path` 指向的当前工作区、当前分支上开发：
+
+- 不创建 git worktree
+- 不创建或切换分支
+- 不 commit
+- 不 push
+- 不创建 PR/MR
+
+Review 通过后，状态仍会进入 `待合并`，但实际含义是“改动已留在当前工作区，等待人工检查、提交或丢弃”。
+
+注意：inline 模式的 diff / Review 基于当前工作区未提交改动。若目标仓库原本就有脏文件，它们也会进入改动列表；建议在开始需求前保持工作区干净，或先把无关改动 stash / commit / 移出。
+
 GitLab 工作区示例：
 
 ```json
 {
   "path": "/absolute/path/to/gitlab/repo",
   "scm": "git",
+  "work_mode": "worktree",
   "base": "origin/main",
   "target_branch": "main",
   "push_enabled": true,

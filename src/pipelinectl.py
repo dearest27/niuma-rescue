@@ -300,7 +300,10 @@ def cmd_workspaces(_: argparse.Namespace) -> int:
             review = f"{ws.pr_provider}->{ws.target_branch or '-'}"
         elif ws.scm == "svn" and ws.push_enabled:
             review = "svn commit"
-        print(f"{marker} {ws.key}: path={ws.path} scm={ws.scm} base={ws.base_ref} review={review} test={ws.test_cmd or '-'}")
+        print(
+            f"{marker} {ws.key}: path={ws.path} scm={ws.scm} mode={ws.work_mode} "
+            f"base={ws.base_ref} review={review} test={ws.test_cmd or '-'}"
+        )
     return 0
 
 

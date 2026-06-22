@@ -43,6 +43,10 @@ def _is_svn(ws: "workspaces.Workspace") -> bool:
     return getattr(ws, "scm", "git").lower() == "svn"
 
 
+def _is_inline(ws: "workspaces.Workspace") -> bool:
+    return getattr(ws, "work_mode", "worktree").lower() == "inline"
+
+
 def _target_branch(ws: "workspaces.Workspace") -> str:
     target = getattr(ws, "target_branch", "") or ""
     if target:
@@ -83,6 +87,9 @@ def prepare(ws: "workspaces.Workspace", req_id: str, worktree_base: Path) -> Pre
             _run(["svn", "checkout", ws.base_ref, str(wc)])   # base_ref 是 svn URL（trunk/分支）
         return Prepared(wc, branch)
     # git
+    if _is_inline(ws):
+        branch = _run(["git", "branch", "--show-current"], cwd=ws.path, check=False).stdout.strip()
+        return Prepared(ws.path, branch or f"inline-{ws.key}")
     branch = f"feat/req-{req_id}"
     wt = worktree_base / f"REQ-{req_id}"
     if not wt.exists():
@@ -100,6 +107,18 @@ def changed_files(ws: "workspaces.Workspace", work: Path) -> list[str]:
             if any(marker in status for marker in ("A", "M", "D", "R", "?", "!")):
                 changed.append(path)
         return changed
+    if _is_inline(ws):
+        out = _run(["git", "status", "--porcelain"], cwd=work, check=False).stdout
+        changed = []
+        for line in out.splitlines():
+            if len(line) < 4:
+                continue
+            path = line[3:].strip()
+            if " -> " in path:
+                path = path.rsplit(" -> ", 1)[-1]
+            if path:
+                changed.append(path)
+        return changed
     out = _run(["git", "diff", "--name-only", f"{ws.base_ref}...HEAD"], cwd=work, check=False).stdout
     return [x for x in out.splitlines() if x.strip()]
 
@@ -108,6 +127,15 @@ def changed_files(ws: "workspaces.Workspace", work: Path) -> list[str]:
 def diff_text(ws: "workspaces.Workspace", work: Path) -> str:
     if _is_svn(ws):
         return _run(["svn", "diff"], cwd=work, check=False).stdout
+    if _is_inline(ws):
+        diff = _run(["git", "diff", "HEAD"], cwd=work, check=False).stdout
+        untracked = [
+            path for path in changed_files(ws, work)
+            if _run(["git", "ls-files", "--error-unmatch", path], cwd=work, check=False).returncode != 0
+        ]
+        if untracked:
+            diff += "\n\nUntracked files:\n" + "\n".join(f"- {path}" for path in untracked) + "\n"
+        return diff
     return _run(["git", "diff", f"{ws.base_ref}...HEAD"], cwd=work, check=False).stdout
 
 
@@ -115,6 +143,8 @@ def diff_text(ws: "workspaces.Workspace", work: Path) -> str:
 def baseline_run(ws: "workspaces.Workspace", work: Path, run_test):
     """返回 (rc, out)；建立不了基线返回 None。run_test(path)->(rc,out)。"""
     base = work.parent / f"{work.name}__base"
+    if _is_inline(ws):
+        return None
     if _is_svn(ws):
         try:
             _run(["svn", "checkout", ws.base_ref, str(base)])
@@ -145,6 +175,8 @@ def baseline_run(ws: "workspaces.Workspace", work: Path, run_test):
 def after_develop(ws: "workspaces.Workspace", work: Path, branch: str) -> PublishResult:
     if _is_svn(ws):
         return PublishResult(True, f"svnwc:{ws.key}", "改动留在 svn 工作副本，待 Review 通过后提交")
+    if _is_inline(ws):
+        return PublishResult(True, f"inline:{ws.key}:{branch}", f"原地工作区 {ws.key}/{branch}（未提交/未推送）")
     if not ws.push_enabled:
         return PublishResult(True, f"local:{ws.key}:{branch}", f"本地分支 {branch}（未启用 push）")
     p = _run(["git", "push", "-u", "origin", branch], cwd=work, check=False)
@@ -166,6 +198,8 @@ def after_review(ws: "workspaces.Workspace", work: Path, branch: str,
             return PublishResult(False, detail=(p.stderr or p.stdout)[-400:])
         return PublishResult(True, f"svn:{ws.base_ref}", "已 svn commit（SVN 无 PR，请人工 review/合并）")
     # git：建 PR/MR
+    if _is_inline(ws):
+        return PublishResult(True, f"inline:{ws.key}:{branch}", f"Review 通过，改动保留在原地工作区 {ws.key}/{branch}，待人工提交")
     if not ws.pr_enabled:
         return PublishResult(True, branch, f"已推送 {branch}（未启用建 PR）")
     provider = getattr(ws, "pr_provider", "github")

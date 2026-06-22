@@ -12,7 +12,7 @@ Throw requirements into Feishu and let agents take the overtime shift.
 - Supports per-requirement agent selection: `需求@cursor：xxx`.
 - Supports per-requirement workspace selection: `需求 #backend-service：xxx`.
 - Clarifies requirements automatically, generates a PRD, and waits for human confirmation.
-- Creates or reuses an isolated worktree after confirmation, then asks an agent to implement the change.
+- Creates or reuses an isolated worktree after confirmation, or edits the current branch in inline mode, then asks an agent to implement the change.
 - Runs a configurable test or lint gate.
 - Moves into review automatically and writes the result back to Feishu.
 - Sends live progress cards in Feishu while agents are running, updating in place instead of spamming messages.
@@ -30,7 +30,7 @@ Feishu IM
   -> src/message_router.py creates or advances Feishu Base records
   -> src/dispatcher.py handles 待澄清 / 开发中 / Review中
   -> Cursor / Claude / Codex / Gemini CLI
-  -> git worktree + test gate + review
+  -> git workspace/worktree + test gate + review
   -> Feishu Base status / logs / notifications
 ```
 
@@ -213,6 +213,8 @@ Configuration layers:
 - `workspaces.json`: multi-workspace / GitLab / SVN configuration
 - `fields.json`: field-name mapping for an existing Feishu Base
 - `agents.json`: default agents, CLI commands, and aliases
+
+For large repositories, a workspace can opt into `work_mode: "inline"` to let agents edit the existing working tree and current branch directly. Inline mode does not create a git worktree, commit, push, or create a PR/MR; you decide what to commit manually. Its review diff includes current uncommitted files, so start from a clean working tree when you want precise review scope.
 
 The release package includes:
 

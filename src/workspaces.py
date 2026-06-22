@@ -31,6 +31,7 @@ class Workspace:
     gh_repo: str = ""             # 可选：PR 目标仓库 org/repo（github）
     gitlab_repo: str = ""         # 可选：MR 目标仓库 group/project（gitlab/glab -R）
     target_branch: str = ""       # 可选：PR/MR 目标分支，默认从 base_ref 推断
+    work_mode: str = "worktree"   # worktree | inline；inline 直接在 path 当前分支改，不创建 worktree
 
     @property
     def safe_key(self) -> str:
@@ -107,6 +108,11 @@ def get(key: str | None = None) -> Workspace:
     scm = str(cfg.get("scm") or "git").lower()
     if scm not in {"git", "svn"}:
         raise ValueError(f"工作区 `{selected}` 的 scm 只支持 git/svn，当前是 {scm!r}")
+    work_mode = str(cfg.get("work_mode") or cfg.get("mode") or "worktree").lower()
+    if work_mode in {"inplace", "in-place", "current", "current_branch"}:
+        work_mode = "inline"
+    if work_mode not in {"worktree", "inline"}:
+        raise ValueError(f"工作区 `{selected}` 的 work_mode 只支持 worktree/inline，当前是 {work_mode!r}")
     base_ref = str(cfg.get("base") or C.BASE_REF)
     target_branch = str(cfg.get("target_branch") or cfg.get("target") or _target_from_base(base_ref))
     return Workspace(
@@ -122,6 +128,7 @@ def get(key: str | None = None) -> Workspace:
         gh_repo=str(cfg.get("gh_repo") or C.GH_REPO),
         gitlab_repo=str(cfg.get("gitlab_repo") or cfg.get("glab_repo") or ""),
         target_branch=target_branch,
+        work_mode=work_mode,
     )
 
 

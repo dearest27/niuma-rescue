@@ -3,8 +3,11 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+import config as C
+import develop_utils
 import review_utils
 import routing_utils
+import workspaces
 
 
 class ClarifyRoutingTest(unittest.TestCase):
@@ -46,6 +49,22 @@ class ReviewVerdictTest(unittest.TestCase):
 
 
 class DispatcherHelpersTest(unittest.TestCase):
+    def test_inline_dirty_workspace_does_not_skip_first_develop_run(self) -> None:
+        ws = workspaces.Workspace(key="inline-app", path=Path("/tmp/inline-app"), work_mode="inline")
+
+        self.assertFalse(develop_utils.should_reuse_existing_changes(ws, {}, ["changed.py"]))
+
+    def test_inline_reuses_changes_after_pipeline_link_exists(self) -> None:
+        ws = workspaces.Workspace(key="inline-app", path=Path("/tmp/inline-app"), work_mode="inline")
+        fields = {C.F_LINK: "inline:inline-app:feature/local"}
+
+        self.assertTrue(develop_utils.should_reuse_existing_changes(ws, fields, ["changed.py"]))
+
+    def test_worktree_reuses_existing_requirement_changes(self) -> None:
+        ws = workspaces.Workspace(key="app", path=Path("/tmp/app"), work_mode="worktree")
+
+        self.assertTrue(develop_utils.should_reuse_existing_changes(ws, {}, ["changed.py"]))
+
     def test_review_failure_summary_strips_fail_header_and_keeps_report_path(self) -> None:
         summary = review_utils.review_failure_summary(
             "FAIL\n\n阻塞项\n- README.md:1 缺少必要说明\n\n建议项\n- 补充验证步骤",

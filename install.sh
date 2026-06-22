@@ -109,9 +109,17 @@ JSON
     else
       git_base="$(_prompt "Git base ref" "origin/main")"
       target_branch="${git_base##*/}"
+      work_mode="$(_prompt "Git 工作区模式 worktree/inline" "worktree")"
+      work_mode="$(printf '%s' "$work_mode" | tr '[:upper:]' '[:lower:]')"
+      case "$work_mode" in inline|inplace|in-place|current|current_branch) work_mode=inline ;; *) work_mode=worktree ;; esac
       review_provider="$(_prompt "自动创建 Review? none/github/gitlab" "none")"
       review_provider="$(printf '%s' "$review_provider" | tr '[:upper:]' '[:lower:]')"
       case "$review_provider" in github|gitlab) auto_review=true ;; *) auto_review=false; review_provider=none ;; esac
+      if [ "$work_mode" = "inline" ]; then
+        auto_review=false
+        review_provider=none
+        echo "  inline 模式会原地修改当前分支，不自动 commit/push/建 PR/MR。"
+      fi
       extra=""
       if [ "$review_provider" = "gitlab" ]; then
         gitlab_repo="$(_prompt "GitLab 项目 group/project（可留空让 glab 从 remote 推断）" "")"
@@ -129,6 +137,7 @@ JSON
     "$repo_name": {
       "path": "$repo_path",
       "scm": "git",
+      "work_mode": "$work_mode",
       "base": "$git_base",
       "target_branch": "$target_branch",
       "push_enabled": $auto_review,

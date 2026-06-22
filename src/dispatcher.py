@@ -27,6 +27,7 @@ from pathlib import Path
 import agent_adapters
 import cards
 import config as C
+import develop_utils
 import health
 import lark
 import review_utils
@@ -111,19 +112,7 @@ def build_prompt(stage: str, **kw) -> str:
 
 
 def _field_text(value) -> str:
-    """把飞书字段值归一成字符串，兼容单选/多选/人员等不同返回形状。"""
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, list):
-        return _field_text(value[0]) if value else ""
-    if isinstance(value, dict):
-        for key in ("text", "name", "value", "id"):
-            if value.get(key):
-                return str(value[key]).strip()
-        return ""
-    return str(value).strip()
+    return develop_utils.field_text(value)
 
 
 def _agent_marker(fields: dict, stage: str) -> str:
@@ -181,7 +170,7 @@ def git(*args, cwd=None, check=True):
 
 # ── 工件 / worktree ─────────────────────────────────────────────────
 def ensure_worktree(req_id: str, ws: workspaces.Workspace):
-    """为需求准备（或复用）独立工作区 + 分支。git=worktree，svn=工作副本。幂等。"""
+    """为需求准备执行目录。git 默认 worktree；inline 模式直接复用工作区 path。"""
     p = scm.prepare(ws, req_id, C.WORKTREE_BASE / ws.safe_key)
     return p.work_path, p.branch
 
@@ -323,19 +312,27 @@ def handle_develop(rec: dict) -> None:
     ws = workspace_for(rec)
     wt, branch = ensure_worktree(rid, ws)
     write_dossier(wt, rid, rec["fields"])
-    prompt = build_prompt("code", req_id=rid, dossier=str(dossier_dir(wt, rid)))
+    workspace_note = (
+        "当前 workspace 使用 inline 模式：直接在现有工作区和当前分支上开发。不要创建/切换分支，不要 commit，不要 push；只保留工作区未提交改动，交给用户人工决策。"
+        if getattr(ws, "work_mode", "worktree") == "inline"
+        else "当前 workspace 使用独立 git worktree/分支。按需求完成实现，可提交到当前需求分支。"
+    )
+    prompt = build_prompt("code", req_id=rid, dossier=str(dossier_dir(wt, rid)), workspace_note=workspace_note)
     engine = resolve_agent(rec, "code", C.ENGINE_CODE)
+    inline_mode = getattr(ws, "work_mode", "worktree") == "inline"
     changed = scm.changed_files(ws, wt)
-    if changed:
+    reuse_existing = develop_utils.should_reuse_existing_changes(ws, rec["fields"], changed)
+    if reuse_existing:
         log(f"  复用已有 change set：{len(changed)} 个文件已相对 {ws.base_ref} 变更")
     else:
+        if inline_mode and changed:
+            log(f"  inline 工作区已有 {len(changed)} 个未提交文件；仍执行 agent，后续 diff 会包含当前工作区改动")
         notify(chat, f"🔧 开始开发（{engine}）：写代码 + 跑测试，可能需要几分钟，请稍候…")
         prog = make_progress(chat, _record_title(rec), "开发", engine)
         ok, out = run_agent(engine, prompt, wt, timeout=C.TIMEOUT_CODE, on_progress=prog)
         if not ok:
             return on_failure(rec, f"coder({engine}) 调用失败: {out[:300]}")
-        changed = [x for x in git("diff", "--name-only", f"{ws.base_ref}...HEAD",
-                                  cwd=wt, check=False).stdout.splitlines() if x.strip()]
+        changed = scm.changed_files(ws, wt)
     # 不信 agent 自述，自己跑验收门（跨平台）
     health.emit("dispatcher", "gate_start", record_id=rid, worktree=str(wt))
     ok_test, detail = run_gate(wt, ws)
