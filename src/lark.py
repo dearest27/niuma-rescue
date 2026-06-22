@@ -101,7 +101,8 @@ def update(record_id: str, fields: dict) -> dict:
 
 
 def create(fields: dict) -> dict:
-    return _api("POST", _REC, {"fields": fields})
+    data = _api("POST", _REC, {"fields": fields})
+    return data.get("record", data)
 
 
 def delete(record_id: str) -> dict:

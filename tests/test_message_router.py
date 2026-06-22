@@ -39,6 +39,14 @@ class FakeLark:
         self.cards.append((chat_id, card))
 
 
+class NestedCreateFakeLark(FakeLark):
+    def create(self, fields: dict) -> dict:
+        record = {"record_id": f"rec_{len(self.records) + 1}", "fields": dict(fields)}
+        self.records.append(record)
+        self.created.append(dict(fields))
+        return {"record": record}
+
+
 class MessageRouterTest(unittest.TestCase):
     def setUp(self) -> None:
         self._old_lark = message_router.lark
@@ -91,6 +99,28 @@ class MessageRouterTest(unittest.TestCase):
         self.assertFalse(duplicate)
         self.assertEqual(len(fake.created), 1)
         self.assertEqual(len(fake.cards), 1)
+
+    def test_handle_message_accepts_nested_feishu_create_response(self) -> None:
+        fake = NestedCreateFakeLark()
+        message_router.lark = fake
+
+        handled = message_router.handle_message({
+            "message_type": "text",
+            "chat_id": "oc_1",
+            "sender_id": "ou_1",
+            "content": "需求：修复登录按钮",
+        })
+
+        self.assertFalse(handled)
+        self.assertEqual(len(fake.created), 1)
+        self.assertEqual(len(fake.cards), 1)
+        action_values = [
+            action["value"]
+            for block in fake.cards[0][1]["elements"]
+            for action in block.get("actions", [])
+            if "value" in action
+        ]
+        self.assertTrue(any(v.get("record_id") == "rec_1" for v in action_values))
 
     def test_start_clarify_button_moves_setup_to_clarify(self) -> None:
         fake = FakeLark([{"record_id": "rec_1", "fields": {

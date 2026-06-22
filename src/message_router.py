@@ -328,6 +328,15 @@ def _create_requirement(fields: dict, clarify_agent: str | None) -> dict:
     return lark.create(fallback)
 
 
+def _normalize_created_record(created: dict, fallback_fields: dict) -> dict:
+    """Normalize Feishu create-record response into {record_id, fields}."""
+    record = created.get("record") if isinstance(created.get("record"), dict) else created
+    record_id = record.get("record_id") or record.get("id")
+    if not record_id:
+        raise RuntimeError(f"创建需求成功但返回缺少 record_id: {created}")
+    return {"record_id": record_id, "fields": record.get("fields") or fallback_fields}
+
+
 def handle_message(msg: dict) -> bool:
     """处理一条飞书消息。返回 True 表示记录进入了"机器该处理"的状态
     （待澄清/开发中），listener 据此立刻触发一次 dispatcher --once。"""
@@ -384,7 +393,7 @@ def handle_message(msg: dict) -> bool:
         if clarify_agent:                            # 内联 @agent 作为预选（执行Agent=全阶段默认）
             fields[C.F_AGENT] = clarify_agent
         created = lark.create(fields)
-        rec = {"record_id": created["record_id"], "fields": created.get("fields", fields)}
+        rec = _normalize_created_record(created, fields)
         _send_card_or_text(
             chat_id,
             cards.settings_card(rec, _ws_keys()),
