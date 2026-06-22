@@ -110,8 +110,9 @@ cp zentao.example.json zentao.json
 
 ```json
 {
-  "base_url": "https://zentao.example.com",
+  "base_url": "https://chandao.yeecoh.com:11180",
   "bug_endpoint": "/api.php/v1/bugs",
+  "token_endpoint": "/api.php/v1/tokens",
   "bug_query": {
     "status": "active",
     "limit": 50
@@ -119,10 +120,27 @@ cp zentao.example.json zentao.json
   "token": "",
   "token_env": "ZENTAO_TOKEN",
   "token_header": "Token",
+  "account": "",
+  "account_env": "ZENTAO_ACCOUNT",
+  "password": "",
+  "password_env": "ZENTAO_PASSWORD",
   "workspace": "backend-service",
   "agent": "",
   "dry_run": true
 }
+```
+
+禅道企业版 12.4 常见接法是：
+
+- `POST /api.php/v1/tokens`，body 为 `{"account": "...", "password": "..."}`，拿 token。
+- `GET /api.php/v1/bugs`，请求头带 `Token: <token>`，拉 Bug。
+
+如果不想把账号密码写进 `zentao.json`，可以放到本机环境变量：
+
+```bash
+export ZENTAO_BASE_URL=https://chandao.yeecoh.com:11180
+export ZENTAO_ACCOUNT=your-account
+export ZENTAO_PASSWORD=your-password
 ```
 
 先预览：

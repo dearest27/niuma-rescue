@@ -14,5 +14,6 @@ dist/
 scripts/windows/
 state/
 workspaces.json
+zentao.json
 *.sqlite3
 *.sqlite3-*

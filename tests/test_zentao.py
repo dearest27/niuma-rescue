@@ -40,6 +40,11 @@ class ZentaoTest(unittest.TestCase):
 
         self.assertEqual(sync_zentao._existing_bug_ids(records), {"1", "2"})
 
+    def test_extract_token_accepts_common_response_shapes(self) -> None:
+        self.assertEqual(zentao._extract_token({"token": "abc"}), "abc")
+        self.assertEqual(zentao._extract_token({"data": {"token": "def"}}), "def")
+        self.assertEqual(zentao._extract_token({"access_token": "ghi"}), "ghi")
+
 
 if __name__ == "__main__":
     unittest.main()

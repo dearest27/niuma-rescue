@@ -23,9 +23,14 @@ class ZentaoConfig:
     base_url: str
     bug_endpoint: str = "/api.php/v1/bugs"
     bug_query: dict[str, Any] | None = None
+    token_endpoint: str = "/api.php/v1/tokens"
     token: str = ""
     token_env: str = "ZENTAO_TOKEN"
     token_header: str = "Token"
+    account: str = ""
+    account_env: str = "ZENTAO_ACCOUNT"
+    password: str = ""
+    password_env: str = "ZENTAO_PASSWORD"
     extra_headers: dict[str, str] | None = None
     workspace: str = ""
     agent: str = ""
@@ -63,13 +68,20 @@ def load_config(path: str | Path | None = None) -> ZentaoConfig:
         raise SystemExit(f"缺少禅道地址：设置 ZENTAO_BASE_URL 或创建 {cfg_path}")
     token_env = str(data.get("token_env") or "ZENTAO_TOKEN")
     token = str(os.getenv(token_env) or os.getenv("ZENTAO_TOKEN") or data.get("token") or "")
+    account_env = str(data.get("account_env") or "ZENTAO_ACCOUNT")
+    password_env = str(data.get("password_env") or "ZENTAO_PASSWORD")
     return ZentaoConfig(
         base_url=base_url,
         bug_endpoint=str(data.get("bug_endpoint") or os.getenv("ZENTAO_BUG_ENDPOINT") or "/api.php/v1/bugs"),
         bug_query=dict(data.get("bug_query") or {}),
+        token_endpoint=str(data.get("token_endpoint") or os.getenv("ZENTAO_TOKEN_ENDPOINT") or "/api.php/v1/tokens"),
         token=token,
         token_env=token_env,
         token_header=str(data.get("token_header") or "Token"),
+        account=str(os.getenv(account_env) or os.getenv("ZENTAO_ACCOUNT") or data.get("account") or ""),
+        account_env=account_env,
+        password=str(os.getenv(password_env) or os.getenv("ZENTAO_PASSWORD") or data.get("password") or ""),
+        password_env=password_env,
         extra_headers={str(k): str(v) for k, v in dict(data.get("extra_headers") or {}).items()},
         workspace=str(data.get("workspace") or os.getenv("ZENTAO_WORKSPACE") or ""),
         agent=str(data.get("agent") or os.getenv("ZENTAO_AGENT") or ""),
@@ -83,14 +95,57 @@ def _json_request(url: str, headers: dict[str, str]) -> Any:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _json_post(url: str, body: dict[str, Any], headers: dict[str, str] | None = None) -> Any:
+    payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req = Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json", "Accept": "application/json", **(headers or {})},
+        method="POST",
+    )
+    with urlopen(req, timeout=60) as resp:
+        raw = resp.read().decode("utf-8")
+    return json.loads(raw) if raw else {}
+
+
+def _extract_token(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    candidates = [
+        payload.get("token"),
+        payload.get("access_token"),
+        payload.get("jwt"),
+        payload.get("data", {}).get("token") if isinstance(payload.get("data"), dict) else None,
+        payload.get("data", {}).get("access_token") if isinstance(payload.get("data"), dict) else None,
+    ]
+    for value in candidates:
+        if value:
+            return str(value)
+    return ""
+
+
+def obtain_token(cfg: ZentaoConfig) -> str:
+    if cfg.token:
+        return cfg.token
+    if not (cfg.account and cfg.password):
+        return ""
+    url = urljoin(cfg.base_url.rstrip("/") + "/", cfg.token_endpoint.lstrip("/"))
+    payload = _json_post(url, {"account": cfg.account, "password": cfg.password})
+    token = _extract_token(payload)
+    if not token:
+        raise RuntimeError(f"禅道登录成功但响应里没有 token: {payload}")
+    return token
+
+
 def _headers(cfg: ZentaoConfig) -> dict[str, str]:
     headers = {"Accept": "application/json", **(cfg.extra_headers or {})}
-    if cfg.token:
+    token = obtain_token(cfg)
+    if token:
         header = cfg.token_header.strip()
         if header.lower() == "authorization":
-            headers[header] = cfg.token if cfg.token.lower().startswith("bearer ") else f"Bearer {cfg.token}"
+            headers[header] = token if token.lower().startswith("bearer ") else f"Bearer {token}"
         else:
-            headers[header] = cfg.token
+            headers[header] = token
     return headers
 
 
