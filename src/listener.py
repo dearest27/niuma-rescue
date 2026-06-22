@@ -25,7 +25,8 @@ from pathlib import Path
 import config as C  # noqa: F401  (触发 .env 加载，把 FEISHU_* 灌进环境)
 import health
 import inbox
-import lark  # 本地数据/IM 模块（含 patch_card）；main() 里把 lark_oapi 局部别名为 lark，互不影响
+import lark as larkdata  # 本地数据/IM 模块（含 patch_card）。注意：下方 `import lark_oapi as lark`
+                         # 在模块级把全局名 `lark` 绑成 SDK，所以本地模块必须用别名，别叫 lark。
 import message_router
 
 _PIPELINE_DIR = Path(__file__).resolve().parent
@@ -127,7 +128,7 @@ def _handle_card_async(value: dict, message_id) -> None:
         print(f"[listener] card_action {value} → {toast_text}", file=sys.stderr)
         if new_card and message_id:          # 原地更新卡片（确认/完成/配置选择都靠它生效）
             try:
-                lark.patch_card(message_id, new_card)
+                larkdata.patch_card(message_id, new_card)
             except Exception as e:
                 print(f"[listener] 卡片更新失败: {e}", file=sys.stderr)
         if should_dispatch:
