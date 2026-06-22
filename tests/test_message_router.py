@@ -5,6 +5,7 @@ import unittest
 import config as C
 import message_router
 import ops
+import sync_zentao
 
 
 class FakeLark:
@@ -53,12 +54,14 @@ class MessageRouterTest(unittest.TestCase):
         self._old_ops_lark = ops.lark
         self._old_runs_clear = ops.runs.clear
         self._old_runs_retry_now = ops.runs.retry_now
+        self._old_pull_bugs = message_router.sync_zentao.pull_bugs
 
     def tearDown(self) -> None:
         message_router.lark = self._old_lark
         ops.lark = self._old_ops_lark
         ops.runs.clear = self._old_runs_clear
         ops.runs.retry_now = self._old_runs_retry_now
+        message_router.sync_zentao.pull_bugs = self._old_pull_bugs
 
     def test_parse_intake_supports_agent_and_workspace(self) -> None:
         body, agent, workspace = message_router.parse_intake("需求@Cursor #frontend-app：新增登录页文档")
@@ -207,6 +210,56 @@ class MessageRouterTest(unittest.TestCase):
         self.assertEqual(len(fake.sent), 1)
         self.assertIn("需求诊断", fake.sent[0][1])
         self.assertIn("review 未通过", fake.sent[0][1])
+
+    def test_zentao_preview_command_does_not_import(self) -> None:
+        fake = FakeLark()
+        message_router.lark = fake
+        calls = []
+
+        def fake_pull_bugs(**kwargs):
+            calls.append(kwargs)
+            return sync_zentao.PullResult(
+                fetched=1,
+                created=0,
+                skipped=0,
+                dry_run=True,
+                preview=[{C.F_TITLE: "[禅道Bug#1] 登录失败"}],
+            )
+
+        message_router.sync_zentao.pull_bugs = fake_pull_bugs
+
+        handled = message_router.handle_message({
+            "message_type": "text",
+            "chat_id": "oc_1",
+            "sender_id": "ou_1",
+            "content": "预览禅道 1",
+        })
+
+        self.assertFalse(handled)
+        self.assertEqual(calls, [{"limit": 1, "dry_run": True}])
+        self.assertIn("登录失败", fake.sent[0][1])
+
+    def test_zentao_sync_command_imports_bugs(self) -> None:
+        fake = FakeLark()
+        message_router.lark = fake
+        calls = []
+
+        def fake_pull_bugs(**kwargs):
+            calls.append(kwargs)
+            return sync_zentao.PullResult(fetched=3, created=2, skipped=1, dry_run=False, preview=[])
+
+        message_router.sync_zentao.pull_bugs = fake_pull_bugs
+
+        handled = message_router.handle_message({
+            "message_type": "text",
+            "chat_id": "oc_1",
+            "sender_id": "ou_1",
+            "content": "同步禅道 3",
+        })
+
+        self.assertFalse(handled)
+        self.assertEqual(calls, [{"limit": 3, "dry_run": False}])
+        self.assertIn("新增 2 条", fake.sent[0][1])
 
     def test_answer_to_waiting_record_returns_to_clarify(self) -> None:
         fake = FakeLark([

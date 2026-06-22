@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import dataclass
 from typing import Any
 
 import config as C
@@ -19,6 +20,15 @@ OPTIONAL_FIELDS = {
     C.F_WORKSPACE,
     C.F_AGENT,
 }
+
+
+@dataclass(frozen=True)
+class PullResult:
+    fetched: int
+    created: int
+    skipped: int
+    dry_run: bool
+    preview: list[dict[str, Any]]
 
 
 def _existing_bug_ids(records: list[dict[str, Any]]) -> set[str]:
@@ -59,29 +69,44 @@ def _create_with_optional_fallback(fields: dict[str, Any]) -> dict:
     return lark.create(remaining)
 
 
-def pull(args: argparse.Namespace) -> int:
-    cfg = zentao.load_config(args.config)
-    if args.limit is not None:
+def _config_with_limit(cfg: zentao.ZentaoConfig, limit: int | None) -> zentao.ZentaoConfig:
+    if limit is not None:
         query = dict(cfg.bug_query or {})
-        query["limit"] = args.limit
+        query["limit"] = limit
         cfg = zentao.ZentaoConfig(**{**cfg.__dict__, "bug_query": query})
+    return cfg
+
+
+def pull_bugs(config: str | None = None, *, limit: int | None = None, dry_run: bool = False) -> PullResult:
+    cfg = _config_with_limit(zentao.load_config(config), limit)
     bugs = zentao.fetch_bugs(cfg)
-    records = lark.list_records() if not args.dry_run else []
+    records = lark.list_records() if not dry_run else []
     existing = _existing_bug_ids(records)
     created = 0
     skipped = 0
+    preview: list[dict[str, Any]] = []
     for bug in bugs:
         if bug.id in existing:
             skipped += 1
             continue
         fields = zentao.base_fields_for_bug(bug, cfg)
-        if args.dry_run:
-            print(json.dumps(fields, ensure_ascii=False))
+        if dry_run:
+            preview.append(fields)
         else:
             _create_with_optional_fallback(fields)
             created += 1
             existing.add(bug.id)
-    print(f"zentao pull: fetched={len(bugs)} created={created} skipped={skipped} dry_run={args.dry_run}")
+    return PullResult(fetched=len(bugs), created=created, skipped=skipped, dry_run=dry_run, preview=preview)
+
+
+def pull(args: argparse.Namespace) -> int:
+    result = pull_bugs(args.config, limit=args.limit, dry_run=args.dry_run)
+    for fields in result.preview:
+        print(json.dumps(fields, ensure_ascii=False))
+    print(
+        f"zentao pull: fetched={result.fetched} created={result.created} "
+        f"skipped={result.skipped} dry_run={result.dry_run}"
+    )
     return 0
 
 

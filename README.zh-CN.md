@@ -201,6 +201,13 @@ python3 -B src/sync_zentao.py pull
 同步器会按 `来源系统=zentao + 外部ID=<bug id>` 幂等去重；如果旧 Base 还没有外部来源字段，会把标记写进需求描述并继续导入。
 禅道企业版 12.4 可用 `POST /api.php/v1/tokens` 获取 token，再用 `GET /api.php/v1/bugs` 拉 Bug；账号密码建议放在 `ZENTAO_ACCOUNT` / `ZENTAO_PASSWORD` 环境变量里。
 
+飞书里也可以直接触发：
+
+```text
+预览禅道 3
+同步禅道 3
+```
+
 ## 配置
 
 核心部署配置在 `.env`，可从 `.env.example` 复制：

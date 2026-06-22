@@ -7,6 +7,7 @@ import config as C
 import health
 import lark
 import ops
+import sync_zentao
 import workspaces
 
 
@@ -128,6 +129,8 @@ _COMMAND_HELP = """可用指令：
 配置（点按选择 Agent / 工作区）
 统计 / 周报（运行报表）
 诊断（当前需求）
+预览禅道 [数量]（只看，不写入 Base）
+同步禅道 [数量]（从禅道拉 Bug 到 Base）
 重试
 清锁
 解除阻塞 [待澄清|开发中|Review中]
@@ -191,6 +194,26 @@ def _record_diagnosis_text(rec: dict) -> str:
     ])
 
 
+def _parse_optional_limit(text: str, command: str, default: int | None = None) -> int | None:
+    value = text.removeprefix(command).strip()
+    if not value:
+        return default
+    if not value.isdigit():
+        raise ValueError("数量必须是数字")
+    return max(1, int(value))
+
+
+def _zentao_preview_text(result: sync_zentao.PullResult, limit: int | None) -> str:
+    lines = [f"禅道预览：拉到 {result.fetched} 条，展示 {len(result.preview)} 条。"]
+    for idx, fields in enumerate(result.preview[: limit or 5], start=1):
+        lines.append(f"{idx}. {fields.get(C.F_TITLE) or '-'}")
+    return "\n".join(lines)
+
+
+def _zentao_sync_text(result: sync_zentao.PullResult) -> str:
+    return f"禅道同步完成：拉到 {result.fetched} 条，新增 {result.created} 条，跳过 {result.skipped} 条。"
+
+
 def handle_command(text: str, chat_id: str, records: list[dict]) -> bool | None:
     """Return True/False when a command was handled; None means not a command."""
     normalized = re.sub(r"\s+", " ", text.strip())
@@ -228,6 +251,22 @@ def handle_command(text: str, chat_id: str, records: list[dict]) -> bool | None:
             lark.send_text(chat_id, "当前会话没有进行中的需求。")
             return False
         lark.send_text(chat_id, _record_diagnosis_text(rec))
+        return False
+    if normalized == "预览禅道" or normalized.startswith("预览禅道 "):
+        try:
+            limit = _parse_optional_limit(normalized, "预览禅道", default=5)
+            result = sync_zentao.pull_bugs(limit=limit, dry_run=True)
+            lark.send_text(chat_id, _zentao_preview_text(result, limit))
+        except Exception as exc:
+            lark.send_text(chat_id, f"⚠️ 禅道预览失败：{exc}")
+        return False
+    if normalized == "同步禅道" or normalized.startswith("同步禅道 "):
+        try:
+            limit = _parse_optional_limit(normalized, "同步禅道", default=None)
+            result = sync_zentao.pull_bugs(limit=limit, dry_run=False)
+            lark.send_text(chat_id, _zentao_sync_text(result))
+        except Exception as exc:
+            lark.send_text(chat_id, f"⚠️ 禅道同步失败：{exc}")
         return False
     if normalized == "状态":
         rec = _active_record(records, chat_id)

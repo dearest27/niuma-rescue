@@ -160,6 +160,15 @@ python3 -B src/sync_zentao.py pull
 
 同步器会把 Bug 写成 `待选择`，由飞书卡片继续选择 Agent / 工作区并进入后续流水线。
 
+也可以直接在飞书里发：
+
+```text
+预览禅道 3
+同步禅道 3
+```
+
+`预览禅道` 只回显标题，不写 Base；`同步禅道` 会真实导入。数字参数可省略，省略时使用 `zentao.json` 里的 `bug_query.limit`。
+
 ## 发布 / Review
 
 ```text

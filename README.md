@@ -201,6 +201,13 @@ python3 -B src/sync_zentao.py pull
 The importer deduplicates by `external_source=zentao + external_id=<bug id>`. If an older Base does not have the optional external fields yet, it falls back to writing a marker into the requirement description.
 For ZenTao Enterprise 12.4, use `POST /api.php/v1/tokens` to obtain a token, then `GET /api.php/v1/bugs` to pull bugs. Prefer `ZENTAO_ACCOUNT` / `ZENTAO_PASSWORD` environment variables over storing credentials in `zentao.json`.
 
+You can also trigger it from Feishu:
+
+```text
+预览禅道 3
+同步禅道 3
+```
+
 ## Configuration
 
 Core deployment settings live in `.env`, which can be copied from `.env.example`:
