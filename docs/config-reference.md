@@ -6,6 +6,7 @@
 - `fields.json`：飞书 Base 字段名映射，默认读取内置字段名。
 - `workspaces.json`：代码工作区、Git/GitLab/SVN 配置。
 - `agents.json`：默认 agent、CLI 命令模板、别名。
+- `zentao.json`：禅道 Bug 导入配置。
 
 `.env` 可从 `.env.example` 复制；其他配置可从 `*.example.json` 复制。
 
@@ -78,7 +79,12 @@ cp fields.example.json fields.json
   "agent": "执行Agent",
   "agent_clarify": "澄清Agent",
   "agent_code": "开发Agent",
-  "agent_review": "ReviewAgent"
+  "agent_review": "ReviewAgent",
+  "external_source": "来源系统",
+  "external_id": "外部ID",
+  "external_url": "外部链接",
+  "external_type": "外部类型",
+  "sync_status": "同步状态"
 }
 ```
 
@@ -89,6 +95,49 @@ PIPELINE_FIELDS_FILE=/abs/path/to/fields.json
 ```
 
 字段左侧 key 是流水线内部语义，不要改；右侧 value 是飞书 Base 里的真实列名。
+
+外部来源字段是可选字段，用于禅道等外部系统同步。旧 Base 没有这些列时，禅道导入器会把来源标记写进需求描述继续工作；新建 Base 会由 `bootstrap.py` 自动创建这些字段。
+
+## 禅道 Bug 导入
+
+复制配置样例：
+
+```bash
+cp zentao.example.json zentao.json
+```
+
+最小配置：
+
+```json
+{
+  "base_url": "https://zentao.example.com",
+  "bug_endpoint": "/api.php/v1/bugs",
+  "bug_query": {
+    "status": "active",
+    "limit": 50
+  },
+  "token": "",
+  "token_env": "ZENTAO_TOKEN",
+  "token_header": "Token",
+  "workspace": "backend-service",
+  "agent": "",
+  "dry_run": true
+}
+```
+
+先预览：
+
+```bash
+python3 -B src/sync_zentao.py pull --dry-run
+```
+
+确认后导入：
+
+```bash
+python3 -B src/sync_zentao.py pull
+```
+
+同步器会把 Bug 写成 `待选择`，由飞书卡片继续选择 Agent / 工作区并进入后续流水线。
 
 ## 发布 / Review
 

@@ -39,6 +39,7 @@ EXCLUDE_FILES = {
     "fields.json",
     "pipeline_realtime.py",
     "workspaces.json",
+    "zentao.json",
     "_run_tests_tmp.py",
 }
 EXCLUDE_SUFFIXES = {

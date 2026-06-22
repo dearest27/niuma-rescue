@@ -188,6 +188,18 @@ python3 -B src/pipelinectl.py set-agent rec_xxx cursor --stage code
 python3 -B src/pipelinectl.py set-workspace rec_xxx backend-service
 ```
 
+## 禅道 Bug 导入
+
+第一阶段支持把禅道 Bug 单向拉到飞书 Base，飞书继续作为集中任务池：
+
+```bash
+cp zentao.example.json zentao.json
+python3 -B src/sync_zentao.py pull --dry-run
+python3 -B src/sync_zentao.py pull
+```
+
+同步器会按 `来源系统=zentao + 外部ID=<bug id>` 幂等去重；如果旧 Base 还没有外部来源字段，会把标记写进需求描述并继续导入。
+
 ## 配置
 
 核心部署配置在 `.env`，可从 `.env.example` 复制：

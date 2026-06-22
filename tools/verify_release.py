@@ -24,11 +24,13 @@ FORBIDDEN_ZIP_PARTS = {
     "workspaces.json",
     "fields.json",
     "agents.json",
+    "zentao.json",
 }
 REQUIRED_ZIP_PATHS = {
     "README.md",
     "LICENSE",
     ".env.example",
+    "zentao.example.json",
     "requirements.txt",
     "install.py",
     "install.sh",

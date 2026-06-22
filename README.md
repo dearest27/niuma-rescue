@@ -188,6 +188,18 @@ python3 -B src/pipelinectl.py set-agent rec_xxx cursor --stage code
 python3 -B src/pipelinectl.py set-workspace rec_xxx backend-service
 ```
 
+## ZenTao Bug Import
+
+The first ZenTao integration is one-way: pull ZenTao bugs into Feishu Base while Feishu remains the central task board.
+
+```bash
+cp zentao.example.json zentao.json
+python3 -B src/sync_zentao.py pull --dry-run
+python3 -B src/sync_zentao.py pull
+```
+
+The importer deduplicates by `external_source=zentao + external_id=<bug id>`. If an older Base does not have the optional external fields yet, it falls back to writing a marker into the requirement description.
+
 ## Configuration
 
 Core deployment settings live in `.env`, which can be copied from `.env.example`:

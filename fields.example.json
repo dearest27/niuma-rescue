@@ -13,5 +13,10 @@
   "agent": "执行Agent",
   "agent_clarify": "澄清Agent",
   "agent_code": "开发Agent",
-  "agent_review": "ReviewAgent"
+  "agent_review": "ReviewAgent",
+  "external_source": "来源系统",
+  "external_id": "外部ID",
+  "external_url": "外部链接",
+  "external_type": "外部类型",
+  "sync_status": "同步状态"
 }

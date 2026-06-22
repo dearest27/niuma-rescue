@@ -90,6 +90,11 @@ _FIELD_DEFAULTS = {
     "agent_clarify": "澄清Agent",
     "agent_code": "开发Agent",
     "agent_review": "ReviewAgent",
+    "external_source": "来源系统",
+    "external_id": "外部ID",
+    "external_url": "外部链接",
+    "external_type": "外部类型",
+    "sync_status": "同步状态",
 }
 _FIELDS = {**_FIELD_DEFAULTS, **{k: v for k, v in _load_json(FIELDS_FILE).items() if isinstance(v, str) and v.strip()}}
 
@@ -108,6 +113,11 @@ F_AGENT   = _FIELDS["agent"]   # 可选：claude/codex/gemini/cursor，作为各
 F_AGENT_CLARIFY = _FIELDS["agent_clarify"]  # 可选：覆盖澄清阶段 agent
 F_AGENT_CODE    = _FIELDS["agent_code"]  # 可选：覆盖开发阶段 agent
 F_AGENT_REVIEW  = _FIELDS["agent_review"]  # 可选：覆盖 Review 阶段 agent
+F_EXTERNAL_SOURCE = _FIELDS["external_source"]  # 可选：外部系统来源，如 zentao
+F_EXTERNAL_ID     = _FIELDS["external_id"]      # 可选：外部系统 ID，如 bug id
+F_EXTERNAL_URL    = _FIELDS["external_url"]     # 可选：外部系统链接
+F_EXTERNAL_TYPE   = _FIELDS["external_type"]    # 可选：bug/task/story
+F_SYNC_STATUS     = _FIELDS["sync_status"]      # 可选：同步状态/备注
 
 # ── 状态值（单选选项）────────────────────────────────────────────────
 S_SETUP   = "待选择"     # 新需求落地后先让人选澄清 Agent + 工作区（dispatcher 不碰）

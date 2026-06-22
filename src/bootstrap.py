@@ -38,6 +38,11 @@ _FIELDS = [
     (C.F_AGENT_CLARIFY, 1, None),
     (C.F_AGENT_CODE, 1, None),
     (C.F_AGENT_REVIEW, 1, None),
+    (C.F_EXTERNAL_SOURCE, 1, None),
+    (C.F_EXTERNAL_ID, 1, None),
+    (C.F_EXTERNAL_URL, 1, None),
+    (C.F_EXTERNAL_TYPE, 1, None),
+    (C.F_SYNC_STATUS, 1, None),
     ("更新时间", 1002, {"date_formatter": "yyyy-MM-dd HH:mm"}),
 ]
 
