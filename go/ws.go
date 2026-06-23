@@ -21,7 +21,9 @@ func (a *App) startListener(trigger func()) {
 		}).
 		OnP2CardActionTrigger(func(ctx context.Context, e *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
 			return a.onCardAction(e, trigger)
-		})
+		}).
+		// 应用订阅了"消息已读"事件但我们不处理；注册空 handler 免得 SDK 刷 ERROR 日志。
+		OnP2MessageReadV1(func(ctx context.Context, e *larkim.P2MessageReadV1) error { return nil })
 	cli := larkws.NewClient(cfg.AppID, cfg.AppSecret, larkws.WithEventHandler(h))
 
 	// 心跳：每 60s 记一次"还活着"，供 `健康`/doctor 判断 listener 是否在跑。
