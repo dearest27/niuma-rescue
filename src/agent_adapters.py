@@ -336,20 +336,14 @@ class CursorAdapter(AgentAdapter):
         "workspace is not trusted",
     )
 
-    def stream_argv(self) -> list[str]:
-        """把 --output-format 的值换成 stream-json：边跑边吐事件，才能按活跃度判卡死。"""
-        argv = self.prepare_argv()
-        for i, a in enumerate(argv):
-            if a == "--output-format" and i + 1 < len(argv):
-                argv[i + 1] = "stream-json"
-                return argv
-        return argv + ["--output-format", "stream-json"]
-
     def _argv(self) -> list[str]:
-        return self.stream_argv()
+        # 尊重配置里的 --output-format。注意：cursor 的 composer-2.5（非 fast）只在 text 模式可用，
+        # stream-json 会被拒（"Cannot use this model"）。所以不再强制改 stream-json。
+        return self.prepare_argv()
 
     def _new_sink(self):
-        return _CursorStream()
+        # 配了 stream-json → 解析事件（带活跃度看门狗 + 进度）；否则裸文本。
+        return _CursorStream() if "stream-json" in self._argv() else _RawSink()
 
 
 ADAPTER_TYPES: dict[str, type[AgentAdapter]] = {

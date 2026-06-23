@@ -103,10 +103,14 @@ class CursorStreamTest(unittest.TestCase):
         self.assertIn("socket disconnected", "\n".join(s.error_lines))
         self.assertEqual(s.final_text(), "plain text reply")
 
-    def test_stream_argv_swaps_output_format(self) -> None:
-        argv = agent_adapters.CursorAdapter("cursor").stream_argv()
-        self.assertIn("stream-json", argv)
-        self.assertNotIn("text", argv)
+    def test_cursor_respects_config_output_format(self) -> None:
+        # cursor 不再强制 stream-json（composer-2.5 非 fast 只在 text 可用）；尊重配置。
+        ad = agent_adapters.CursorAdapter("cursor")
+        argv = ad._argv()
+        if "stream-json" in argv:
+            self.assertIsInstance(ad._new_sink(), agent_adapters._CursorStream)
+        else:
+            self.assertIsInstance(ad._new_sink(), agent_adapters._RawSink)
 
 
 if __name__ == "__main__":

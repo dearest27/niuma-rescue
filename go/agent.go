@@ -134,15 +134,18 @@ func agentArgv(engine string) []string {
 	if !ok {
 		return nil
 	}
-	argv := append([]string{}, base...)
-	if engine == "cursor" { // 换成 stream-json 才能按活跃度判卡死
-		for i, a := range argv {
-			if a == "--output-format" && i+1 < len(argv) {
-				argv[i+1] = "stream-json"
-			}
+	// 尊重配置里的 --output-format：stream-json 走事件解析 + 活跃度看门狗；text 走裸文本。
+	// 注意 cursor 的 composer-2.5（非 fast）只在 text 模式可用，stream-json 会被拒。
+	return append([]string{}, base...)
+}
+
+func hasStreamJSON(argv []string) bool {
+	for _, a := range argv {
+		if a == "stream-json" {
+			return true
 		}
 	}
-	return argv
+	return false
 }
 
 func scrubbedEnv() []string {
@@ -235,10 +238,10 @@ func runAgent(engine, prompt, cwd string, timeout int, lg func(string), onProgre
 	go func() { <-rdone; <-rdone; close(lines) }()
 
 	var sk sink
-	if engine == "cursor" {
-		sk = &cursorSink{}
+	if hasStreamJSON(argv) {
+		sk = &cursorSink{} // stream-json 事件解析
 	} else {
-		sk = &rawSink{}
+		sk = &rawSink{} // 裸文本（cursor 用 composer-2.5/text 时走这）
 	}
 	start := time.Now()
 	lastActivity := start
