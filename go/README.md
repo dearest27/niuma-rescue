@@ -140,6 +140,23 @@ systemctl --user enable --now niuma
 journalctl --user -u niuma -f
 ```
 
+### Windows
+
+`niuma.exe` 是控制台程序，直接跑会**一直挂一个 cmd 窗口**。推荐装成 Windows 服务（[NSSM](https://nssm.cc/)），
+后台无窗口、开机自启、崩溃自愈：
+
+```cmd
+nssm install niuma "C:\path\agent-pipeline\go\niuma.exe"
+nssm set niuma AppDirectory "C:\path\agent-pipeline\go"
+nssm set niuma AppStdout "C:\path\agent-pipeline\logs\niuma.log"
+nssm set niuma AppStderr "C:\path\agent-pipeline\logs\niuma.log"
+nssm set niuma AppEnvironmentExtra "PATH=C:\path\to\agent-cli;%PATH%"
+nssm start niuma          :: 重新 build 后用 nssm restart niuma
+```
+
+不想装服务也可以编译成无窗口程序：`go build -ldflags="-H=windowsgui" -o niuma.exe .`。
+完整三种方式（NSSM / 无窗口编译 / 任务计划程序）见 [../docs/windows-install.md](../docs/windows-install.md)。
+
 ---
 
 ## 工作流程（默认 inline 模式）
