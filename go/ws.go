@@ -35,9 +35,17 @@ func (a *App) startListener(trigger func()) {
 	}()
 
 	emit("listener", "starting", nil)
-	elog("连接飞书长连接，监听消息 + 卡片回调 …")
-	if err := cli.Start(context.Background()); err != nil {
-		elog("listener 退出: %v", err)
+	for {
+		elog("连接飞书长连接，监听消息 + 卡片回调 …")
+		if err := cli.Start(context.Background()); err != nil {
+			elog("listener 退出: %v，5s 后重连", err)
+			emit("listener", "stopped", map[string]any{"error": err.Error()})
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		elog("listener 返回 nil，主进程保持常驻")
+		emit("listener", "ready", nil)
+		select {}
 	}
 }
 

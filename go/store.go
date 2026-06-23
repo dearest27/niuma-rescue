@@ -75,6 +75,15 @@ func (s *Store) claim(recordID, stage, status, title string) Claim {
 	now := nowf()
 	staleBefore := now - float64(cfg.StaleAfter)
 	host, _ := os.Hostname()
+	if _, err := s.db.Exec("BEGIN IMMEDIATE"); err != nil {
+		return Claim{Reason: "db_error"}
+	}
+	done := false
+	defer func() {
+		if !done {
+			s.db.Exec("ROLLBACK")
+		}
+	}()
 
 	var (
 		st, stg, sts string
@@ -108,6 +117,10 @@ func (s *Store) claim(recordID, stage, status, title string) Claim {
 	if e != nil {
 		return Claim{Reason: "db_error"}
 	}
+	if _, e := s.db.Exec("COMMIT"); e != nil {
+		return Claim{Reason: "db_error"}
+	}
+	done = true
 	s.event(runID, recordID, stage, "claimed", status, "", title)
 	return Claim{OK: true, RunID: runID, Attempts: attempts}
 }

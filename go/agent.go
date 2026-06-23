@@ -6,15 +6,17 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 )
 
 type AgentResult struct {
-	OK       bool
-	Output   string
-	Duration float64
+	OK           bool
+	Output       string
+	Duration     float64
+	ArtifactsDir string
 }
 
 var baseErrorMarkers = []string{
@@ -237,6 +239,10 @@ func runAgentOnce(engine, prompt, cwd string, timeout int, lg func(string), onPr
 		lg("  调用 " + engine + ": " + strings.Join(argv, " ") + " (timeout=" + itoa(timeout) + "s)…")
 	}
 
+	artDir := agentArtifactDir(engine)
+	_ = os.MkdirAll(artDir, 0o755)
+	_ = os.WriteFile(filepath.Join(artDir, "prompt.md"), []byte(prompt), 0o644)
+
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = cwd
 	cmd.Env = scrubbedEnv()
@@ -248,7 +254,8 @@ func runAgentOnce(engine, prompt, cwd string, timeout int, lg func(string), onPr
 		if lg != nil {
 			lg("  找不到命令 `" + argv[0] + "` —— 该引擎 CLI 没装或不在 PATH")
 		}
-		return AgentResult{OK: false, Output: "command not found: " + argv[0]}
+		writeAgentArtifacts(artDir, engine, cwd, argv, -1, 0, nil, []string{err.Error()}, "command not found: "+argv[0])
+		return AgentResult{OK: false, Output: "command not found: " + argv[0] + "\n日志: " + artDir, ArtifactsDir: artDir}
 	}
 	go func() { io.WriteString(stdin, prompt); stdin.Close() }()
 
@@ -267,6 +274,7 @@ func runAgentOnce(engine, prompt, cwd string, timeout int, lg func(string), onPr
 	go func() { <-rdone; <-rdone; close(lines) }()
 
 	var sk sink
+	var outLines, errLines []string
 	if hasStreamJSON(argv) {
 		sk = &cursorSink{} // stream-json 事件解析
 	} else {
@@ -289,6 +297,11 @@ loop:
 			}
 			lastActivity = time.Now()
 			seenOutput = true
+			if ln.tag == "err" {
+				errLines = append(errLines, ln.line)
+			} else {
+				outLines = append(outLines, ln.line)
+			}
 			sk.feed(ln.tag, ln.line)
 		case <-ticker.C:
 			now := time.Now()
@@ -323,7 +336,8 @@ loop:
 		if lg != nil {
 			lg("  " + msg)
 		}
-		return AgentResult{OK: false, Output: msg, Duration: duration}
+		writeAgentArtifacts(artDir, engine, cwd, argv, -1, duration, outLines, errLines, msg)
+		return AgentResult{OK: false, Output: msg + "\n日志: " + artDir, Duration: duration, ArtifactsDir: artDir}
 	}
 
 	cmd.Wait()
@@ -344,5 +358,33 @@ loop:
 		res = validate(engine, rc, blob)
 	}
 	res.Duration = duration
+	res.ArtifactsDir = artDir
+	writeAgentArtifacts(artDir, engine, cwd, argv, rc, duration, outLines, errLines, res.Output)
+	if !res.OK {
+		res.Output = strings.TrimSpace(res.Output) + "\n日志: " + artDir
+	}
 	return res
+}
+
+func agentArtifactDir(engine string) string {
+	name := time.Now().Format("20060102-150405") + "-" + itoa(int(time.Now().UnixNano()%1e9)) + "-" + engine
+	return filepath.Join(stateDir(), "agent-runs", name)
+}
+
+func writeAgentArtifacts(dir, engine, cwd string, argv []string, rc int, duration float64, stdout, stderr []string, result string) {
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "stdout.log"), []byte(strings.Join(stdout, "\n")), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "stderr.log"), []byte(strings.Join(stderr, "\n")), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "result.txt"), []byte(result), 0o644)
+	meta := map[string]any{
+		"engine":   engine,
+		"cwd":      cwd,
+		"argv":     argv,
+		"return":   rc,
+		"duration": round1(duration),
+		"time":     time.Now().Format("2006-01-02 15:04:05 -0700"),
+	}
+	if b, err := json.MarshalIndent(meta, "", "  "); err == nil {
+		_ = os.WriteFile(filepath.Join(dir, "meta.json"), b, 0o644)
+	}
 }

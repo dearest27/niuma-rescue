@@ -4,7 +4,7 @@
     "gitlab-app": {
       "path": "/absolute/path/to/your/repo",
       "scm": "git",
-      "work_mode": "worktree",
+      "work_mode": "inline",
       "base": "origin/main",
       "target_branch": "main",
       "push_enabled": false,
@@ -13,10 +13,10 @@
       "gitlab_repo": "group/project",
       "test_cmd": ""
     },
-    "inline-app": {
+    "worktree-app": {
       "path": "/absolute/path/to/large/repo",
       "scm": "git",
-      "work_mode": "inline",
+      "work_mode": "worktree",
       "base": "origin/main",
       "push_enabled": false,
       "pr_enabled": false,

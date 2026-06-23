@@ -11,6 +11,7 @@ type Workspace struct {
 	Key          string
 	Path         string
 	SCM          string // git | svn
+	WorkMode     string // worktree | inline
 	BaseRef      string
 	TargetBranch string
 	TestCmd      string
@@ -27,6 +28,7 @@ type wsFile struct {
 type wsItem struct {
 	Path         string `json:"path"`
 	SCM          string `json:"scm"`
+	WorkMode     string `json:"work_mode"`
 	Base         string `json:"base"`
 	TargetBranch string `json:"target_branch"`
 	TestCmd      string `json:"test_cmd"`
@@ -53,7 +55,7 @@ func loadWorkspaces() *wsFile {
 // defaultWorkspace 从 .env 合成（没有 workspaces.json 时）。
 func defaultWorkspace() Workspace {
 	return Workspace{
-		Key: "default", Path: cfg.RepoPath, SCM: "git", BaseRef: cfg.BaseRef,
+		Key: "default", Path: cfg.RepoPath, SCM: "git", WorkMode: "inline", BaseRef: cfg.BaseRef,
 		TargetBranch: lastSeg(cfg.BaseRef), TestCmd: cfg.TestCmd, PRProvider: "none",
 		GHRepo: cfg.GHRepo, PushEnabled: cfg.PushEnabled, PREnabled: cfg.PREnabled,
 	}
@@ -82,6 +84,10 @@ func workspaceGet(key string) (Workspace, error) {
 	if scm == "" {
 		scm = "git"
 	}
+	mode := it.WorkMode
+	if mode == "" {
+		mode = "inline"
+	}
 	base := it.Base
 	if base == "" {
 		base = "origin/main"
@@ -95,7 +101,7 @@ func workspaceGet(key string) (Workspace, error) {
 		prov = "none"
 	}
 	return Workspace{
-		Key: key, Path: it.Path, SCM: scm, BaseRef: base, TargetBranch: tb,
+		Key: key, Path: it.Path, SCM: scm, WorkMode: mode, BaseRef: base, TargetBranch: tb,
 		TestCmd: it.TestCmd, PRProvider: prov, GHRepo: it.GHRepo,
 		PushEnabled: it.PushEnabled, PREnabled: it.PREnabled,
 	}, nil

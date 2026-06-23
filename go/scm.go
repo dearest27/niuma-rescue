@@ -23,8 +23,20 @@ func git(dir string, args ...string) (string, error) {
 	return string(out), err
 }
 
-// scmPrepare 为需求准备（或复用）独立 worktree + 分支。幂等。
+func (w Workspace) inline() bool {
+	return strings.EqualFold(strings.TrimSpace(w.WorkMode), "inline")
+}
+
+// scmPrepare 为需求准备（或复用）开发目录。inline 模式直接使用原仓库。
 func scmPrepare(ws Workspace, reqID string) (workPath, branch string, err error) {
+	if ws.inline() {
+		out, _ := git(ws.Path, "branch", "--show-current")
+		branch = strings.TrimSpace(out)
+		if branch == "" {
+			branch = ws.TargetBranch
+		}
+		return ws.Path, branch, nil
+	}
 	base := filepath.Join(cfg.WorktreeBase, ws.safeKey())
 	if e := os.MkdirAll(base, 0o755); e != nil {
 		return "", "", e
@@ -47,6 +59,26 @@ func scmPrepare(ws Workspace, reqID string) (workPath, branch string, err error)
 }
 
 func changedFiles(ws Workspace, wt string) []string {
+	if ws.inline() {
+		out, _ := git(wt, "status", "--porcelain")
+		seen := map[string]bool{}
+		var files []string
+		for _, l := range strings.Split(out, "\n") {
+			if len(l) < 4 {
+				continue
+			}
+			p := strings.TrimSpace(l[3:])
+			if strings.Contains(p, " -> ") {
+				parts := strings.Split(p, " -> ")
+				p = strings.TrimSpace(parts[len(parts)-1])
+			}
+			if p != "" && !seen[p] {
+				seen[p] = true
+				files = append(files, p)
+			}
+		}
+		return files
+	}
 	out, _ := git(wt, "diff", "--name-only", ws.BaseRef+"...HEAD")
 	var files []string
 	for _, l := range strings.Split(out, "\n") {
@@ -57,7 +89,27 @@ func changedFiles(ws Workspace, wt string) []string {
 	return files
 }
 
+func productChangedFiles(files []string) []string {
+	var out []string
+	for _, f := range files {
+		if strings.HasPrefix(f, dossierDir+"/") {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
 func diffText(ws Workspace, wt string) string {
+	if ws.inline() {
+		out, _ := git(wt, "diff", "--stat")
+		body, _ := git(wt, "diff")
+		untracked, _ := git(wt, "ls-files", "--others", "--exclude-standard")
+		if strings.TrimSpace(untracked) != "" {
+			body += "\n\nUntracked files:\n" + untracked
+		}
+		return strings.TrimSpace(out + "\n" + body)
+	}
 	out, _ := git(wt, "diff", ws.BaseRef+"...HEAD")
 	return out
 }
@@ -69,6 +121,9 @@ func gitCommitAll(wt, msg string) {
 
 // afterDevelop：开发完成后发布（push 开则推分支）。
 func afterDevelop(ws Workspace, wt, branch string) pubResult {
+	if ws.inline() {
+		return pubResult{OK: true, Note: "inline 模式：已保留在当前工作区，未提交/未推送", Link: branch}
+	}
 	if !ws.PushEnabled {
 		return pubResult{OK: true, Note: "未开 push（本地分支 " + branch + "）", Link: branch}
 	}
@@ -81,6 +136,9 @@ func afterDevelop(ws Workspace, wt, branch string) pubResult {
 
 // afterReview：review 通过后建 PR（github via gh）或仅 push。
 func afterReview(ws Workspace, wt, branch, title, body string) pubResult {
+	if ws.inline() {
+		return pubResult{OK: true, Note: "inline 模式：待人工决定提交/合并", Link: branch}
+	}
 	if ws.PushEnabled {
 		if out, err := git(wt, "push", "-u", "origin", branch, "--force-with-lease"); err != nil {
 			return pubResult{OK: false, Detail: strings.TrimSpace(out)}

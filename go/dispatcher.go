@@ -177,20 +177,27 @@ func (a *App) handleDevelop(rec *Record, runID string) {
 	}
 	a.writeDossier(wt, rid, f)
 	engine := a.resolveAgent(rec, "code", cfg.EngineCode)
-	changed := changedFiles(ws, wt)
+	changed := productChangedFiles(changedFiles(ws, wt))
 	if len(changed) == 0 {
 		a.fs.notify(chat, "🔧 开始开发（"+engine+"）：写代码 + 跑测试，可能需要几分钟，请稍候…")
 		prog := a.makeProgress(chat, recTitle(rec), "开发", engine, runID)
 		prompt := buildPrompt("code", map[string]string{"req_id": rid, "dossier": a.dossierDir(wt, rid)})
 		res := runAgent(engine, prompt, wt, cfg.TimeoutCode, agentLog, prog)
+		changed = productChangedFiles(changedFiles(ws, wt))
 		if !res.OK {
-			a.onFailure(rec, "coder("+engine+") 调用失败: "+trunc(res.Output, 300), "")
-			return
+			if len(changed) == 0 {
+				a.onFailure(rec, "coder("+engine+") 调用失败且没有产生改动: "+trunc(res.Output, 500), "")
+				return
+			}
+			a.fs.notify(chat, "⚠️ "+engine+" 返回失败，但检测到已产生 "+itoa(len(changed))+" 个文件改动；继续执行验收门。\n"+trunc(res.Output, 300))
+			emit("dispatcher", "agent_failed_with_changes", map[string]any{"record_id": rid, "engine": engine, "changed": len(changed)})
 		}
-		a.gitMu.Lock()
-		gitCommitAll(wt, "[niuma] REQ-"+rid)
-		a.gitMu.Unlock()
-		changed = changedFiles(ws, wt)
+		if !ws.inline() {
+			a.gitMu.Lock()
+			gitCommitAll(wt, "[niuma] REQ-"+rid)
+			a.gitMu.Unlock()
+		}
+		changed = productChangedFiles(changedFiles(ws, wt))
 	}
 	okTest, detail := a.runGate(ws, wt)
 	emit("dispatcher", "gate_done", map[string]any{"record_id": rid, "ok": okTest})
