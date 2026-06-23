@@ -1,2 +1,0 @@
-lark-oapi
-filelock

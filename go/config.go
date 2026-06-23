@@ -93,6 +93,7 @@ type Config struct {
 	TimeoutClarify, TimeoutCode, TimeoutReview          int
 	Inactivity, ProgressInterval, StaleAfter, RetryBase int
 	FailureLimit, PollInterval, MaxConcurrency          int
+	AgentRetries                                        int
 	SetupGate, GateRelative, PushEnabled, PREnabled     bool
 
 	Root, StateDir, WorktreeBase, WorkspacesFile string
@@ -128,6 +129,7 @@ func loadConfig() *Config {
 		FailureLimit:     envInt("PIPELINE_FAILURE_LIMIT", 2),
 		PollInterval:     envInt("PIPELINE_POLL_INTERVAL", 900),
 		MaxConcurrency:   envInt("PIPELINE_MAX_CONCURRENCY", 2),
+		AgentRetries:     envInt("PIPELINE_AGENT_RETRIES", 2),
 
 		SetupGate:    envBool("PIPELINE_SETUP_GATE", true),
 		GateRelative: envBool("PIPELINE_GATE_RELATIVE", true),

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -191,10 +192,38 @@ func validate(engine string, rc int, output string) AgentResult {
 
 type tagLine struct{ tag, line string }
 
-// runAgent 统一执行路径：Popen + 读取 goroutine + 看门狗。
+// 瞬时错误（多为 cursor 的网络/TLS 抖动）——立即重试即可，不该判失败更不该计入熔断。
+var transientRe = regexp.MustCompile(`(?i)aborted|socket disconnected|retriableerror|secure tls|econnreset|connection reset|broken pipe|bad gateway|service unavailable|temporarily unavailable|i/o timeout|\b50[234]\b`)
+
+// runAgent：在 runAgentOnce 外套一层"瞬时错误自动重试"。
+// 网络/TLS 类报错立即重试 AgentRetries 次（短退避），把大多数 cursor 抖动悄悄吞掉。
+func runAgent(engine, prompt, cwd string, timeout int, lg func(string), onProgress func(map[string]any)) AgentResult {
+	tries := cfg.AgentRetries + 1
+	if tries < 1 {
+		tries = 1
+	}
+	var res AgentResult
+	for try := 1; try <= tries; try++ {
+		res = runAgentOnce(engine, prompt, cwd, timeout, lg, onProgress)
+		if res.OK || !transientRe.MatchString(res.Output) {
+			return res
+		}
+		if try < tries {
+			backoff := time.Duration(3*try) * time.Second
+			emit("dispatcher", "agent_transient_retry", map[string]any{"engine": engine, "try": try})
+			if lg != nil {
+				lg("  " + engine + " 瞬时错误(第" + itoa(try) + "次)，" + itoa(3*try) + "s 后重试：" + trunc(res.Output, 100))
+			}
+			time.Sleep(backoff)
+		}
+	}
+	return res
+}
+
+// runAgentOnce 单次执行：Popen + 读取 goroutine + 看门狗。
 // 总超时兜底；无输出超 Inactivity 即判卡死杀掉——但出过首行输出后才武装（沉默到底的引擎不误杀）。
 // 按时间触发 onProgress 心跳。
-func runAgent(engine, prompt, cwd string, timeout int, lg func(string), onProgress func(map[string]any)) AgentResult {
+func runAgentOnce(engine, prompt, cwd string, timeout int, lg func(string), onProgress func(map[string]any)) AgentResult {
 	argv := agentArgv(engine)
 	if argv == nil {
 		return AgentResult{OK: false, Output: "unknown agent: " + engine}

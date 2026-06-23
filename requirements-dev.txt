@@ -1,4 +1,0 @@
-# 开发/测试依赖（运行时只需 requirements.txt）。
-#   .venv/bin/pip install -r requirements-dev.txt
-#   cd src && python -m pytest ../tests -q
-pytest>=8
