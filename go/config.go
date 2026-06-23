@@ -63,7 +63,7 @@ var AgentCmds = map[string][]string{
 	"claude": {"claude", "-p", "--output-format", "text"},
 	"codex":  {"codex", "exec", "-"},
 	"gemini": {"gemini", "--skip-trust", "--approval-mode", "yolo", "-p", " "},
-	"cursor": {"cursor-agent", "--print", "--force", "--trust", "--output-format", "text"},
+	"cursor": {"cursor-agent", "--print", "--force", "--trust", "--model", "composer-2.5", "--output-format", "text"},
 }
 
 // 中文/大小写/别名 → AGENT_CMDS 的 key。
