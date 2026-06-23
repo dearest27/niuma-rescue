@@ -1,57 +1,90 @@
-# Windows 安装说明
+# Windows 安装与运行（Go 版）
 
-## 运行安装器
+niuma 是单个 `niuma.exe`，无运行时依赖。下面是 Windows 上从构建到后台常驻的完整说明。
 
-在 PowerShell 中进入项目目录：
+## 1. 构建
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
+需要 Go 1.25+：
+
+```cmd
+cd agent-pipeline\go
+set GOPROXY=https://goproxy.cn,direct
+go build -o niuma.exe .
 ```
 
-安装器会：
+> 也可以在别的机器上交叉编译，拷贝单文件过去运行：
+> ```bash
+> GOOS=windows GOARCH=amd64 go build -o niuma.exe .
+> ```
 
-- 创建 `.venv`
-- 安装依赖
-- 交互写 `.env`
-- 引导生成 `workspaces.json`（Git / GitLab / SVN）
-- 运行 `src/bootstrap.py`
-- 运行 `src/doctor.py`
-- 可选创建登录启动的计划任务
+## 2. 配置 `.env`
 
-## 计划任务
+放在仓库根（`go\` 的上一层），见 [`.env.example`](../.env.example)。填飞书凭据、Base 的
+`PIPELINE_BASE_TOKEN` / `PIPELINE_TABLE_ID`、目标仓库路径（Windows 路径，如
+`PIPELINE_REPO_PATH=C:\Users\you\repo`）。飞书 Base 字段与「状态」单选选项见
+[feishu-app-setup.md](feishu-app-setup.md)。
 
-可选创建：
+前台验证一下：
 
-```text
-AgentPipelineListener
-AgentPipelineDispatcher
+```cmd
+cd agent-pipeline\go
+niuma.exe
 ```
 
-查看日志：
+## 3. 后台常驻（避免桌面一直挂一个 cmd 黑窗）
 
-```text
-logs\listener.log
-logs\dispatcher.log
+`niuma.exe` 是控制台程序，直接双击/在 cmd 里跑会**一直留一个控制台窗口**。三种干净做法：
+
+### 方案 A（推荐）：装成 Windows 服务（NSSM）
+
+后台运行、无窗口、开机自启、崩溃自动重启——等价于 macOS 的 launchd / Linux 的 systemd。
+下载 [NSSM](https://nssm.cc/)，管理员 cmd 执行：
+
+```cmd
+nssm install niuma "C:\path\agent-pipeline\go\niuma.exe"
+nssm set niuma AppDirectory "C:\path\agent-pipeline\go"
+nssm set niuma AppStdout "C:\path\agent-pipeline\logs\niuma.log"
+nssm set niuma AppStderr "C:\path\agent-pipeline\logs\niuma.log"
+nssm set niuma AppEnvironmentExtra "PATH=C:\path\to\agent-cli;%PATH%"
+nssm start niuma
 ```
 
-停止：
+常用操作：
 
-```powershell
-Stop-ScheduledTask -TaskName AgentPipelineListener
-Stop-ScheduledTask -TaskName AgentPipelineDispatcher
+```cmd
+nssm restart niuma     :: 重新 build 后重启
+nssm stop niuma
+nssm remove niuma confirm
 ```
 
-删除：
+> `AppEnvironmentExtra` 里的 PATH 必须包含 Agent CLI（如 `cursor-agent`）所在目录，
+> 否则服务进程找不到命令。
 
-```powershell
-Unregister-ScheduledTask -TaskName AgentPipelineListener -Confirm:$false
-Unregister-ScheduledTask -TaskName AgentPipelineDispatcher -Confirm:$false
+### 方案 B：编译成无控制台窗口的程序
+
+加 `-H=windowsgui`，生成的 exe **不弹任何窗口**：
+
+```cmd
+go build -ldflags="-H=windowsgui" -o niuma.exe .
 ```
+
+再把它的快捷方式放进「启动」文件夹（`shell:startup`）即可开机自启。
+代价：没有控制台输出，日志只能看文件——把 stdout/stderr 重定向到文件，或直接用方案 A。
+
+### 方案 C：任务计划程序
+
+「任务计划程序」→ 创建任务：
+
+- 触发器：登录时
+- 操作：启动程序 `C:\path\agent-pipeline\go\niuma.exe`，起始于 `...\go`
+- 勾选「不管用户是否登录都要运行」+「隐藏」
+
+也能无窗口后台运行。
 
 ## 注意事项
 
-- Windows 上 agent CLI 可能是 `.cmd`，dispatcher 会通过 `shutil.which` 解析。
-- `PIPELINE_REPO_PATH` 使用 Windows 路径，例如 `C:\Users\you\repo`。
-- `PIPELINE_TEST_CMD` 可留空；填写后会作为验收门命令在 worktree 中执行。
-- 如果 PowerShell 执行策略拦截脚本，用 `-ExecutionPolicy Bypass` 启动。
-- 如果计划任务启动后找不到 `git/gh/cursor-agent`，重新运行安装器或手动调整任务里的 PATH。
+- **一个飞书 app 只能有一个长连接消费者**，别同时再跑别的 listener（旧 Python 版 / Hermes
+  gateway 等）共用同一个 app，否则两边抢事件。
+- Windows 上 Agent CLI 可能是 `.cmd` / `.exe`，确保它在服务进程的 `PATH` 里。
+- 日志默认打到 stdout/stderr；用方案 A 时由 NSSM 落到 `logs\niuma.log`。
+- 状态/锁存在 `state\niuma.sqlite3`；Agent 调用产物在 `state\agent-runs\`。
