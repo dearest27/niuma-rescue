@@ -245,7 +245,7 @@ _DEFAULT_AGENT_CMDS = {
     "claude": ["claude", "-p", "--output-format", "text"],
     "codex":  ["codex", "exec", "-"],
     "gemini": ["gemini", "--skip-trust", "--approval-mode", "yolo", "-p", " "],
-    "cursor": ["cursor-agent", "--print", "--force", "--trust", "--output-format", "text"],
+    "cursor": ["cursor-agent", "--print", "--force", "--trust", "--model", "composer-2.5", "--output-format", "text"],
 }
 _AGENT_COMMANDS = _AGENTS.get("commands", {}) if isinstance(_AGENTS.get("commands"), dict) else {}
 AGENT_CMDS = {
