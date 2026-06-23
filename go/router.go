@@ -10,6 +10,8 @@ var spaceRe = regexp.MustCompile(`\s+`)
 
 var commandHelp = `可用指令：
 看板（所有在途需求一览）
+需求池（待选择需求，勾选确认开始）
+开始开发（把「待开发」队列整批开跑）
 状态（当前会话的需求）
 配置（点按选择 Agent / 工作区）
 健康（服务在不在跑 / 有无卡住）
@@ -25,7 +27,7 @@ var commandHelp = `可用指令：
 
 var activeStatuses = map[string]bool{
 	SSetup: true, SClarify: true, SAnswer: true, SConfirm: true,
-	SDev: true, SReview: true, SMerge: true, SBlocked: true,
+	SDevReady: true, SDev: true, SReview: true, SMerge: true, SBlocked: true,
 }
 
 func parseIntake(text string) (body, agent, wsKey string, ok bool) {
@@ -72,6 +74,7 @@ func findByID(records []Record, rid string) *Record {
 
 func (a *App) sendCardOrText(chatID string, c map[string]any, fallback string) {
 	if _, err := a.fs.sendCard(chatID, c); err != nil {
+		elog("发卡片失败，回退文本 chat=%s: %v", chatID, err)
 		a.fs.sendText(chatID, fallback)
 	}
 }
@@ -101,6 +104,20 @@ func (a *App) handleCommand(text, chatID string, records []Record) (bool, bool) 
 		return true, false
 	case "看板", "全部", "board", "/board":
 		a.sendCardOrText(chatID, boardCard(records), boardText(records))
+		return true, false
+	case "需求池", "池子", "backlog", "/pool":
+		var pool []*Record
+		for i := range records {
+			r := &records[i]
+			if fieldText(r.Fields[FChat]) == chatID && fieldText(r.Fields[FStatus]) == SSetup {
+				pool = append(pool, r)
+			}
+		}
+		if len(pool) == 0 {
+			a.fs.sendText(chatID, "📥 需求池是空的。发「需求：<描述>」往里加。")
+			return true, false
+		}
+		a.sendCardOrText(chatID, backlogCard(pool), backlogText(pool))
 		return true, false
 	case "配置", "config", "/config":
 		rec := findActive(records, chatID)
@@ -143,6 +160,15 @@ func (a *App) handleCommand(text, chatID string, records []Record) (bool, bool) 
 		a.fs.updateRecord(rec.RecordID, map[string]any{FStatus: SClarify})
 		a.fs.sendText(chatID, "🚀 开始澄清。")
 		return true, true
+	case "开始开发", "开跑":
+		rec := findRecordStatus(records, chatID, map[string]bool{SDevReady: true})
+		if rec == nil {
+			a.fs.sendText(chatID, "当前没有「待开发」的需求。")
+			return true, false
+		}
+		toast, dispatch, _ := a.startDevBatch(map[string]any{"workspace": a.workspaceFor(rec).Key}, records)
+		a.fs.sendText(chatID, toast)
+		return true, dispatch
 	}
 
 	// 带参数命令
@@ -223,7 +249,7 @@ func (a *App) handleCommand(text, chatID string, records []Record) (bool, bool) 
 }
 
 var agentCmdRe = regexp.MustCompile(`^(?:切换|设置)(澄清|开发|Review|review)?Agent (.+)$`)
-var statusCmdRe = regexp.MustCompile(`^设置状态 (待选择|待澄清|待回答|待确认|开发中|Review中|待合并|完成|已阻塞)$`)
+var statusCmdRe = regexp.MustCompile(`^设置状态 (待选择|待澄清|待回答|待确认|待开发|开发中|Review中|待合并|完成|已阻塞)$`)
 
 func (a *App) appendClarify(rec *Record, answer string) {
 	merged := strings.TrimSpace(fieldText(rec.Fields[FClarify]) + "\n\n【回答】" + answer)
@@ -269,8 +295,9 @@ func (a *App) handleMessage(msg map[string]any) bool {
 				}
 			}
 			if confirmed {
-				a.fs.updateRecord(rec.RecordID, map[string]any{FStatus: SDev})
-				a.fs.sendText(chatID, "🚀 已确认，开始开发，完成后我会同步进度。")
+				a.fs.updateRecord(rec.RecordID, map[string]any{FStatus: SDevReady})
+				a.fs.sendText(chatID, "👌 已确认，进入「待开发」队列。攒齐要做的几条后，点批次卡片的「开始开发本批」（或回复『开始开发』）整批开跑。")
+				a.sendDevQueueCard(chatID, a.workspaceFor(rec))
 			} else {
 				a.appendClarify(rec, text)
 				a.fs.sendText(chatID, "已记录你的补充，我再过一遍。")
@@ -316,24 +343,108 @@ func (a *App) handleMessage(msg map[string]any) bool {
 		return false
 	}
 	if gated {
-		a.sendCardOrText(chatID, settingsCard(created, workspaceKeys()),
-			"需求已收到。回复『切换Agent <名>』『切换工作区 <key>』选好后回『开始澄清』。")
+		// 只记录，不开跑。把本会话所有「待选择」需求列成需求池卡片，由人勾选确认。
+		pool := []*Record{created}
+		for i := range records {
+			r := &records[i]
+			if r.RecordID != created.RecordID && fieldText(r.Fields[FChat]) == chatID && fieldText(r.Fields[FStatus]) == SSetup {
+				pool = append(pool, r)
+			}
+		}
+		a.fs.sendText(chatID, "✅ 已记录到需求池。")
+		a.sendCardOrText(chatID, backlogCard(pool), backlogText(pool))
 		return false
 	}
 	a.fs.sendText(chatID, "🔍 已收到，正在澄清需求…")
 	return true
 }
 
+// confirmBacklog 处理需求池的多选提交：把勾选的「待选择」需求一起推进到「待澄清」。
+func (a *App) confirmBacklog(value map[string]any, records []Record) (string, bool, map[string]any) {
+	fv, _ := value["_form"].(map[string]any)
+	picked := toStrList(fv["picked"])
+	if len(picked) == 0 {
+		return "没有勾选任何需求", false, nil
+	}
+	n := 0
+	var titles []string
+	for _, id := range picked {
+		r := findByID(records, id)
+		if r == nil || fieldText(r.Fields[FStatus]) != SSetup {
+			continue
+		}
+		if err := a.fs.updateRecord(id, map[string]any{FStatus: SClarify}); err == nil {
+			n++
+			titles = append(titles, recTitle(r))
+		}
+	}
+	if n == 0 {
+		return "勾选的需求都不在「待选择」状态了", false, nil
+	}
+	note := "已进入澄清流程，完成后会同步进度。未选的仍留在需求池。\n\n本批：" + strings.Join(titles, " / ")
+	return "🚀 已开始 " + itoa(n) + " 个需求", true, card2Note("🚀 已开始 "+itoa(n)+" 个需求", note, "green")
+}
+
+// sendDevQueueCard 把某工作区在本会话里所有「待开发」需求列成批次队列卡片。
+func (a *App) sendDevQueueCard(chatID string, ws Workspace) {
+	records, err := a.fs.listRecords()
+	if err != nil {
+		return
+	}
+	var q []*Record
+	for i := range records {
+		r := &records[i]
+		if fieldText(r.Fields[FStatus]) == SDevReady && fieldText(r.Fields[FChat]) == chatID && a.workspaceFor(r).Key == ws.Key {
+			q = append(q, r)
+		}
+	}
+	if len(q) == 0 {
+		return
+	}
+	a.sendCardOrText(chatID, devQueueCard(q, ws.Key),
+		"📦 "+ws.Key+" 待开发队列有 "+itoa(len(q))+" 条，回复『开始开发』整批开始。")
+}
+
+// startDevBatch 把某工作区所有「待开发」需求整批推进到「开发中」，由 dispatcher 合批执行。
+func (a *App) startDevBatch(value map[string]any, records []Record) (string, bool, map[string]any) {
+	wsKey := fieldText(value["workspace"])
+	var titles []string
+	for i := range records {
+		r := &records[i]
+		if fieldText(r.Fields[FStatus]) != SDevReady || a.workspaceFor(r).Key != wsKey {
+			continue
+		}
+		if err := a.fs.updateRecord(r.RecordID, map[string]any{FStatus: SDev}); err == nil {
+			titles = append(titles, recTitle(r))
+		}
+	}
+	if len(titles) == 0 {
+		return "该工作区没有待开发的需求了", false, nil
+	}
+	note := "已整批进入开发（合批一次执行）：\n" + strings.Join(titles, " / ") + "\n完成后会逐条推「待合并」决策卡。"
+	return "🚀 开始开发 " + itoa(len(titles)) + " 个需求", true,
+		doneToastCard("🚀 开始开发本批（"+itoa(len(titles))+"）", note, "purple")
+}
+
 // handleCardAction 处理卡片按钮。返回 (toast, dispatch, 替换卡片或 nil)。
 func (a *App) handleCardAction(value map[string]any) (string, bool, map[string]any) {
-	rid := fieldText(value["record_id"])
 	action := fieldText(value["action"])
-	if rid == "" {
-		return "无效操作", false, nil
-	}
 	records, err := a.fs.listRecords()
 	if err != nil {
 		return "查询失败", false, nil
+	}
+	// 需求池多选提交：没有单条 record_id，单独处理。
+	// 兜底：部分 form_submit 不回传按钮 value，只要带了表单值就按需求池提交处理。
+	if action == "confirm_backlog" || (action == "" && value["_form"] != nil) {
+		return a.confirmBacklog(value, records)
+	}
+	// 待开发批次触发：按工作区把所有「待开发」整批推进到「开发中」。
+	if action == "start_dev_batch" {
+		return a.startDevBatch(value, records)
+	}
+	rid := fieldText(value["record_id"])
+	if rid == "" {
+		return "无效操作", false, nil
 	}
 	rec := findByID(records, rid)
 	if rec == nil {
@@ -346,14 +457,22 @@ func (a *App) handleCardAction(value map[string]any) (string, bool, map[string]a
 		if status != SConfirm {
 			return "当前状态「" + status + "」，无需确认", false, nil
 		}
-		a.fs.updateRecord(rid, map[string]any{FStatus: SDev})
-		return "✅ 已确认，开始开发", true, doneToastCard("✅ 已确认："+title, "已进入开发，完成后同步进度。", "blue")
+		a.fs.updateRecord(rid, map[string]any{FStatus: SDevReady})
+		a.sendDevQueueCard(fieldText(rec.Fields[FChat]), a.workspaceFor(rec))
+		return "✅ 已确认，进入待开发队列", false, doneToastCard("✅ 已确认："+title, "已进入「待开发」队列；攒齐后点批次卡片的「🚀 开始开发本批」整批开跑。", "blue")
 	case "done":
 		if status != SMerge {
 			return "当前状态「" + status + "」", false, nil
 		}
 		a.fs.updateRecord(rid, map[string]any{FStatus: SDone})
 		return "✅ 已标记完成", false, doneToastCard("✅ 已完成："+title, "需求已收尾。", "green")
+	case "do_review":
+		if status != SMerge {
+			return "当前状态「" + status + "」，无法发起 Review", false, nil
+		}
+		a.fs.updateRecord(rid, map[string]any{FStatus: SReview})
+		agent := orDefault(fieldText(rec.Fields[FAgentReview]), orDefault(fieldText(rec.Fields[FAgent]), cfg.EngineReview))
+		return "🔍 已发起 Review", true, doneToastCard("🔍 开始 Review："+title, "将用 "+agent+" 审查当前工作区改动，请稍候。", "wathet")
 	case "start_clarify":
 		if status != SSetup {
 			return "当前状态「" + status + "」，无需开始澄清", false, nil

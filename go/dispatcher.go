@@ -11,10 +11,17 @@ import (
 )
 
 type App struct {
-	fs    *Feishu
-	st    *Store
-	sem   chan struct{} // 并发上限
-	gitMu sync.Mutex    // 串行化共享 base 仓库上的 worktree 操作
+	fs      *Feishu
+	st      *Store
+	sem     chan struct{} // 并发上限
+	gitMu   sync.Mutex    // 串行化共享 base 仓库上的 worktree 操作
+	wsLocks sync.Map      // workspace key -> *sync.Mutex：inline 工作区共享同一棵树，按工作区串行
+}
+
+// wsLock 返回某工作区的互斥锁（懒创建）。inline 模式下同一工作区同一时刻只允许一条/一批需求在跑。
+func (a *App) wsLock(key string) *sync.Mutex {
+	m, _ := a.wsLocks.LoadOrStore(key, &sync.Mutex{})
+	return m.(*sync.Mutex)
 }
 
 var agentLog = func(s string) { logf("%s", s) }
@@ -164,10 +171,14 @@ func (a *App) handleClarify(rec *Record, runID string) {
 }
 
 func (a *App) handleDevelop(rec *Record, runID string) {
+	ws := a.workspaceFor(rec)
+	if ws.inline() {
+		a.handleDevelopInline(rec, ws, runID)
+		return
+	}
 	rid := rec.RecordID
 	f := rec.Fields
 	chat := fieldText(f[FChat])
-	ws := a.workspaceFor(rec)
 	a.gitMu.Lock()
 	wt, branch, err := scmPrepare(ws, rid)
 	a.gitMu.Unlock()
@@ -213,6 +224,109 @@ func (a *App) handleDevelop(rec *Record, runID string) {
 	}
 	a.advance(rec, SReview, "[code:"+engine+"] 完成、测试通过、"+pub.Note, map[string]any{FLink: pub.Link})
 	a.fs.notify(chat, "✅ 开发完成（"+engine+"）：改动 "+itoa(len(changed))+" 个文件 · 测试通过 · "+pub.Note+"，进入 Review。")
+}
+
+// handleDevelopInline：inline 工作区的开发。多条「开发中」需求合批成一次 agent 调用，
+// 在共享工作树上一次性实现；跳过自动测试门（可配置）；完成后每条停在「待合并」，
+// 推卡片让人决定「做 Review」还是「标记完成」。调用方已持有该工作区的锁。
+func (a *App) handleDevelopInline(rec *Record, ws Workspace, runID string) {
+	wt := ws.Path
+	batch := a.collectDevBatch(rec, ws)
+	if len(batch) == 0 {
+		batch = []*Record{rec}
+	}
+	engine := a.resolveAgent(rec, "code", cfg.EngineCode)
+	chat := fieldText(rec.Fields[FChat])
+
+	// 写每条需求的档案 + 拼合批 prompt
+	var sb strings.Builder
+	sb.WriteString("你是资深工程师。本批次需要在同一个工作区里，一次性实现下面这些需求。\n")
+	sb.WriteString("仓库根的 AGENTS.md 是代码规范与构建/测试约定的唯一来源，务必遵守。\n\n")
+	for i, r := range batch {
+		a.writeDossier(wt, r.RecordID, r.Fields)
+		sb.WriteString(fmt.Sprintf("## 需求 %d：REQ-%s %s\n- 档案目录：%s/（先读 prd.md，再读 requirement.md）\n\n",
+			i+1, r.RecordID, recTitle(r), a.dossierDir(wt, r.RecordID)))
+	}
+	sb.WriteString("# 要求\n")
+	sb.WriteString("1. 逐个实现每条需求的验收标准，改动控制在各自 PRD 的范围内，不顺手重构无关代码。\n")
+	sb.WriteString("2. 为关键逻辑补单元测试。\n")
+	sb.WriteString("3. inline 策略：改动留在工作区即可，**绝对不要 commit / push**，由人工决定提交。\n")
+	sb.WriteString("4. 每条需求在其档案目录写 handoff.json：{\"stage\":\"coder\",\"done\":\"...\",\"files_touched\":[...]}。\n")
+	sb.WriteString("5. 不碰密钥 / .env；输入在边界处校验。\n")
+
+	titles := make([]string, len(batch))
+	for i, r := range batch {
+		titles[i] = recTitle(r)
+	}
+	a.fs.notify(chat, fmt.Sprintf("🔧 开始开发（%s · %s）：本批 %d 个需求 [%s]，单次跑通，请稍候…",
+		engine, ws.Key, len(batch), strings.Join(titles, " / ")))
+	emit("dispatcher", "batch_develop_start", map[string]any{"workspace": ws.Key, "count": len(batch), "engine": engine})
+
+	prog := a.makeProgress(chat, fmt.Sprintf("批次×%d", len(batch)), "开发", engine, runID)
+	res := runAgent(engine, sb.String(), wt, cfg.TimeoutCode, agentLog, prog)
+	changed := productChangedFiles(changedFiles(ws, wt))
+	if !res.OK && len(changed) == 0 {
+		for _, r := range batch {
+			a.onFailure(r, "coder("+engine+") 调用失败且没有产生改动: "+trunc(res.Output, 400), "")
+		}
+		return
+	}
+	if !res.OK {
+		a.fs.notify(chat, "⚠️ "+engine+" 返回失败，但检测到已产生 "+itoa(len(changed))+" 个文件改动；继续。\n"+trunc(res.Output, 300))
+	}
+
+	// 验收门：inline 默认跳过，可用 PIPELINE_INLINE_SKIP_GATE=0 打开
+	gateNote := "（inline 已跳过自动测试门）"
+	if !cfg.InlineSkipGate {
+		ok, detail := a.runGate(ws, wt)
+		emit("dispatcher", "gate_done", map[string]any{"workspace": ws.Key, "ok": ok})
+		if !ok {
+			for _, r := range batch {
+				a.onFailure(r, "测试未通过: "+tail(detail, 300), "")
+			}
+			a.fs.notify(chat, "❌ 测试未通过，本批回退重试。")
+			return
+		}
+		gateNote = "测试通过"
+	}
+
+	for _, r := range batch {
+		a.advance(r, SMerge, "[code:"+engine+"] 批次开发完成（共 "+itoa(len(batch))+" 项），"+gateNote+"，待人工决定 Review/合并", nil)
+		a.fs.notifyCard(fieldText(r.Fields[FChat]), reviewDecisionCard(r, len(changed)))
+	}
+	a.fs.notify(chat, fmt.Sprintf("✅ 本批 %d 个需求开发完成（%s）：共改动 %d 个文件，%s。点卡片决定是否 Review。",
+		len(batch), engine, len(changed), gateNote))
+}
+
+// collectDevBatch 收集与 rec 同工作区、状态为「开发中」的所有需求（含 rec）。
+// BatchDevelop 关闭时只返回 rec。
+func (a *App) collectDevBatch(rec *Record, ws Workspace) []*Record {
+	if !cfg.BatchDevelop {
+		return []*Record{rec}
+	}
+	records, err := a.fs.listRecords()
+	if err != nil {
+		return []*Record{rec}
+	}
+	var batch []*Record
+	seen := map[string]bool{}
+	add := func(r *Record) {
+		if !seen[r.RecordID] {
+			seen[r.RecordID] = true
+			batch = append(batch, r)
+		}
+	}
+	add(rec)
+	for i := range records {
+		r := &records[i]
+		if fieldText(r.Fields[FStatus]) != SDev {
+			continue
+		}
+		if a.workspaceFor(r).Key == ws.Key {
+			add(r)
+		}
+	}
+	return batch
 }
 
 func (a *App) handleReview(rec *Record, runID string) {
@@ -363,6 +477,16 @@ func (a *App) runStage(status string, rec *Record, runID string) (err error) {
 }
 
 func (a *App) processChain(rec *Record) {
+	// inline 工作区共享同一棵工作树：只有会改/读树的阶段（开发 / Review）才需要按工作区独占；
+	// 澄清只读需求文字、不碰树，放开并行（并发上限 = PIPELINE_MAX_CONCURRENCY）。
+	if ws := a.workspaceFor(rec); ws.inline() && fieldText(rec.Fields[FStatus]) != SClarify {
+		lk := a.wsLock(ws.Key)
+		if !lk.TryLock() {
+			logf("跳过「%s」· 工作区 %s 正被占用（inline 开发/Review 串行）", recTitle(rec), ws.Key)
+			return
+		}
+		defer lk.Unlock()
+	}
 	for Actionable[fieldText(rec.Fields[FStatus])] {
 		status := fieldText(rec.Fields[FStatus])
 		title := recTitle(rec)

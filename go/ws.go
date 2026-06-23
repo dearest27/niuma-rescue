@@ -90,6 +90,12 @@ func (a *App) onCardAction(e *callback.CardActionTriggerEvent, trigger func()) (
 	if e.Event != nil {
 		if e.Event.Action != nil {
 			value = e.Event.Action.Value
+			if value == nil {
+				value = map[string]any{}
+			}
+			if fv := e.Event.Action.FormValue; fv != nil {
+				value["_form"] = fv // 表单提交值（多选等），按组件 name 取
+			}
 		}
 		if e.Event.Context != nil {
 			msgID = e.Event.Context.OpenMessageID

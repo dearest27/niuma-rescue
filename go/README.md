@@ -1,49 +1,183 @@
-# niuma (Go 重写)
+# niuma（Go 实现）
 
-把 Python 版（`../src`）重写成**单进程单二进制**的 Go 实现。listener + dispatcher 合并为一个进程，
-goroutine 并发；复用同一份 `.env` / 飞书 Base / `workspaces.json`。
+把需求丢进飞书，Agent 替你澄清 → 开发 → Review → 交付。
+**单进程、单静态二进制**：listener + dispatcher 合并为一个进程，goroutine 并发。
 
-## 构建
+---
+
+## 前置条件
+
+- **Go 1.25+**（仅构建时需要；产物是零依赖单文件，部署机器不用装 Go）
+- **Git**，以及一个目标代码仓库
+- 至少一个**可无头运行的 Agent CLI**，并已登录可用：
+  - 默认 `cursor-agent`（澄清/开发/Review 默认都用 cursor）
+  - 也支持 `claude` / `codex` / `gemini`，按需在 `.env` 或飞书里切换
+- 一个**飞书自建应用**（开通多维表格读写 + IM 发消息 + 长连接接收私聊），
+  详见 [../docs/feishu-app-setup.md](../docs/feishu-app-setup.md)
+
+---
+
+## 从零运行（克隆后四步）
+
+### 1) 克隆 & 构建
 
 ```bash
-cd go
+git clone <your-repo-url> agent-pipeline
+cd agent-pipeline/go
 GOPROXY=https://goproxy.cn,direct go build -o niuma .
-# 交叉编译（给别人分发，零依赖单文件）：
-GOOS=linux  GOARCH=amd64 go build -o niuma-linux  .
-GOOS=darwin GOARCH=arm64 go build -o niuma-mac    .
 ```
 
-## 运行
+> 交叉编译分发（给别的机器，零依赖单文件）：
+> ```bash
+> GOOS=linux  GOARCH=amd64 go build -o niuma-linux .
+> GOOS=darwin GOARCH=arm64 go build -o niuma-mac   .
+> ```
 
-复用上层目录的 `.env`（自动在 `./.env` / `../.env` 里找）：
+### 2) 配置 `.env`
+
+`.env` 放在**仓库根**（即 `go/` 的上一层），程序会自动在 `./.env` / `../.env` 里找：
+
+```bash
+cp ../.env.example ../.env
+# 编辑 ../.env，至少填这 5 个必填项：
+#   FEISHU_APP_ID / FEISHU_APP_SECRET
+#   PIPELINE_BASE_TOKEN / PIPELINE_TABLE_ID   ← 来自第 3 步的多维表格 URL
+#   PIPELINE_REPO_PATH                         ← 目标 git 仓库绝对路径
+```
+
+常用可选项：
+
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `PIPELINE_ENGINE_CLARIFY` / `_CODE` / `_REVIEW` | `cursor` | 各阶段默认 Agent |
+| `PIPELINE_MAX_CONCURRENCY` | `2` | 并发上限（澄清并行、不同工作区并行各占一个名额） |
+| `PIPELINE_SETUP_GATE` | `1` | 开=新需求先进「需求池」等人勾选；关=直接开跑 |
+| `PIPELINE_BATCH_DEVELOP` | `1` | inline 下多需求合批成一次开发调用 |
+| `PIPELINE_INLINE_SKIP_GATE` | `1` | inline 开发跳过自动测试门（由人决定 Review） |
+| `PIPELINE_TEST_CMD` | 空 | 验收门 shell，exit 0 视为通过；空则不跑 |
+| `PIPELINE_POLL_INTERVAL` | `900` | 兜底轮询秒数（主要靠事件驱动） |
+| `PIPELINE_AGENT_RUNS_KEEP` | `200` | `state/agent-runs/` 保留最近 N 次调用产物 |
+
+多工作区 / worktree 模式 / SCM 见 [../workspaces.example.json](../workspaces.example.json) 与 [../docs/config-reference.md](../docs/config-reference.md)。
+
+### 3) 准备飞书多维表格（Base）
+
+新建一张多维表格，加好这些字段，并把表格 URL 里的 `app_token` / `table_id` 填进 `.env`
+的 `PIPELINE_BASE_TOKEN` / `PIPELINE_TABLE_ID`。字段名必须**完全一致**：
+
+- 文本/单选：`需求标题` `需求描述` `澄清记录` `PRD` `分支PR链接` `执行日志` `失败次数` `提需求人` `会话ID` `工作区`
+- Agent 单选：`执行Agent` `澄清Agent` `开发Agent` `ReviewAgent`
+- **`状态`（单选）必须包含这些选项**（名字完全一致，少一个会导致写入被飞书拒绝）：
+
+  ```
+  待选择 · 待澄清 · 待回答 · 待确认 · 待开发 · 开发中 · Review中 · 待合并 · 完成 · 已阻塞
+  ```
+
+详见 [../docs/feishu-app-setup.md](../docs/feishu-app-setup.md)。
+
+### 4) 运行
+
+前台跑（先这样验证）：
 
 ```bash
 ./niuma
 ```
 
-⚠️ 和 Python 版用的是**同一个飞书 app**，两者长连接会抢事件——测试 Go 版前先停掉 Python 的
-`listener`（`launchctl bootout …com.agentpipeline.listener` / 停掉 dispatcher 服务）。
+看到「连上 `wss://msg-frontier.feishu.cn`」+「扫描 N 条记录」即正常。
 
-状态/锁存到 `<root>/state/niuma.sqlite3`（与 Python 的 `runs.sqlite3`/`inbox.sqlite3` 分开，互不干扰）。
+---
 
-## 已移植（与 Python 行为对齐）
+## 装成常驻服务
 
-- 飞书 REST（token 自动刷新、记录 CRUD、文本/卡片、原地 patch 卡片）
-- 长连接（消息 + **卡片回调**，无需公网 URL；回调异步不阻塞 keepalive；60s 心跳）
-- 状态机 + 三阶段（澄清/开发/Review）、相对基线验收门、退避重试、熔断阻塞
-- 卡死看门狗（**出首行输出才武装**，沉默引擎不误杀）+ cursor stream-json + 全程进度心跳
-- 「待选择」卡点（`PIPELINE_SETUP_GATE=0` 可关）、所有飞书命令（看板/状态/配置/健康/统计/周报/诊断…）
-- inbox 去重 + runs 认领/心跳/stale、events.jsonl 遥测
-- **并发**：goroutine + per-record 认领 + 信号量（`PIPELINE_MAX_CONCURRENCY`，默认 2），
-  不同需求各自 worktree 并行；解决了 Python 版"全局锁、一个慢 run 堵所有人"的瓶颈
+### macOS（launchd）
 
-## 暂未移植（按需再补）
+把下面存成 `~/Library/LaunchAgents/com.niuma.rescue.plist`，**改掉两处路径**为你的实际路径：
 
-- SCM 只做了 git（svn / gitlab MR 待补）
-- bootstrap 建表（复用 Python 已建的 Base 即可，或先用 Python 跑一次 bootstrap）
-- doctor / 安装脚本（Go 版部署 = 一个二进制 + systemd/launchd unit）
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>            <string>com.niuma.rescue</string>
+  <key>ProgramArguments</key> <array><string>/ABS/PATH/agent-pipeline/go/niuma</string></array>
+  <key>WorkingDirectory</key> <string>/ABS/PATH/agent-pipeline/go</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/Users/你/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>RunAtLoad</key> <true/>
+  <key>KeepAlive</key> <true/>
+  <key>StandardOutPath</key>   <string>/ABS/PATH/agent-pipeline/logs/niuma.log</string>
+  <key>StandardErrorPath</key> <string>/ABS/PATH/agent-pipeline/logs/niuma.log</string>
+</dict>
+</plist>
+```
 
-## 冒烟自测
+> `PATH` 必须包含你的 Agent CLI 所在目录（如 `cursor-agent` 在 `~/.local/bin`），否则常驻进程找不到命令。
 
-已验证：启动 → 连上 `wss://msg-frontier.feishu.cn` → 读 Base 扫描记录。
-完整功能（发需求→待选择→选 Agent/工作区→开始澄清→开发→Review）请停掉 Python 后实测。
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.niuma.rescue.plist
+launchctl kickstart -k gui/$(id -u)/com.niuma.rescue   # 重新构建后用它重启
+tail -f logs/niuma.log
+```
+
+### Linux（systemd，用户级）
+
+`~/.config/systemd/user/niuma.service`：
+
+```ini
+[Unit]
+Description=niuma feishu pipeline
+[Service]
+WorkingDirectory=/ABS/PATH/agent-pipeline/go
+ExecStart=/ABS/PATH/agent-pipeline/go/niuma
+Environment=PATH=/home/你/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=always
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user enable --now niuma
+journalctl --user -u niuma -f
+```
+
+---
+
+## 工作流程（默认 inline 模式）
+
+```
+飞书发「需求：<一句话>」
+   └─ 进「需求池(待选择)」，回一张多选卡片
+        └─ 勾选要做的几条 → 「✅ 确认开始」
+             └─ 待澄清（多条并行澄清）→ 待回答(补充) / 待确认(确认 PRD)
+                  └─ 确认 → 进「待开发」队列（攒着，不自动跑）
+                       └─ 点「🚀 开始开发本批」→ 开发中（同工作区合批成一次执行）
+                            └─ 待合并 → 「🔍 做 Review」或「标记完成」
+```
+
+- **inline**（默认）：所有需求在 `PIPELINE_REPO_PATH` 的**当前工作树**上改动，不自动提交，由人决定。
+- 想每条需求隔离独立目录/分支、自动 push/PR/MR：在 `workspaces.json` 用 `work_mode: "worktree"`。
+- 同一 inline 工作区内开发/Review 串行（共享一棵树）；澄清并行；不同工作区整体并行。
+
+---
+
+## 飞书命令
+
+| 命令 | 作用 |
+|---|---|
+| `需求：<描述>` | 提一个新需求进需求池 |
+| `需求池` / `池子` | 列出待选择需求（可勾选确认） |
+| `开始开发` | 把「待开发」队列整批开跑 |
+| `看板` / `状态` / `配置` / `诊断` | 查看在途需求 / 当前需求 / 选 Agent 工作区 / 单条诊断 |
+| `健康` / `统计` / `周报` | 服务健康 / 运行报表 |
+| `重试` / `清锁` / `重新澄清` / `解除阻塞` / `完成` | 恢复类操作 |
+| `切换Agent <claude\|codex\|gemini\|cursor>` / `切换工作区 <key>` | 改当前需求的 Agent / 工作区 |
+
+---
+
+## 注意
+
+- **一个飞书 app 只能有一个长连接消费者。** 别同时跑第二个 listener（比如老的 Python 版或
+  Hermes gateway 用同一个 app），否则两边抢事件、行为会错乱。
+- 状态/锁/去重存在 `<仓库根>/state/niuma.sqlite3`；每次 Agent 调用的 prompt/输出/元数据
+  落在 `state/agent-runs/`（保留最近 `PIPELINE_AGENT_RUNS_KEEP` 次）。
+- 重新构建后用 `launchctl kickstart -k …`（或 `systemctl --user restart niuma`）重启才会生效。

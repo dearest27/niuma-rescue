@@ -30,15 +30,16 @@ const (
 
 // 状态值（单选选项）。
 const (
-	SSetup   = "待选择"
-	SClarify = "待澄清"
-	SAnswer  = "待回答"
-	SConfirm = "待确认"
-	SDev     = "开发中"
-	SReview  = "Review中"
-	SMerge   = "待合并"
-	SDone    = "完成"
-	SBlocked = "已阻塞"
+	SSetup    = "待选择"
+	SClarify  = "待澄清"
+	SAnswer   = "待回答"
+	SConfirm  = "待确认"
+	SDevReady = "待开发" // 已确认、排队等整批开发的队列状态（不自动跑，等人点「开始开发本批」）
+	SDev      = "开发中"
+	SReview   = "Review中"
+	SMerge    = "待合并"
+	SDone     = "完成"
+	SBlocked  = "已阻塞"
 )
 
 // dispatcher 只处理这三个；其余是人工卡点或终态。
@@ -49,10 +50,13 @@ var HumanInput = map[string]bool{SAnswer: true, SConfirm: true}
 
 // dispatcher 允许自动推进的状态边。
 var ValidTransitions = map[string]map[string]bool{
-	SSetup:   {SClarify: true},
-	SClarify: {SAnswer: true, SConfirm: true, SBlocked: true},
-	SDev:     {SReview: true, SBlocked: true},
-	SReview:  {SDev: true, SMerge: true, SBlocked: true},
+	SSetup:    {SClarify: true},
+	SClarify:  {SAnswer: true, SConfirm: true, SBlocked: true},
+	SConfirm:  {SDevReady: true, SBlocked: true},             // 确认 → 进「待开发」队列
+	SDevReady: {SDev: true, SBlocked: true},                  // 人点「开始开发本批」→ 开发中
+	SDev:      {SReview: true, SMerge: true, SBlocked: true}, // SMerge：inline 开发完停靠，待人决定 Review
+	SReview:   {SDev: true, SMerge: true, SBlocked: true},
+	SMerge:    {SReview: true}, // 人点「做 Review」从待合并回到 Review
 }
 
 var IntakePrefixes = []string{"需求"}
@@ -93,8 +97,9 @@ type Config struct {
 	TimeoutClarify, TimeoutCode, TimeoutReview          int
 	Inactivity, ProgressInterval, StaleAfter, RetryBase int
 	FailureLimit, PollInterval, MaxConcurrency          int
-	AgentRetries                                        int
+	AgentRetries, AgentRunsKeep                         int
 	SetupGate, GateRelative, PushEnabled, PREnabled     bool
+	BatchDevelop, InlineSkipGate                        bool
 
 	Root, StateDir, WorktreeBase, WorkspacesFile string
 }
@@ -115,7 +120,7 @@ func loadConfig() *Config {
 		GHRepo:    os.Getenv("PIPELINE_GH_REPO"),
 		TestCmd:   os.Getenv("PIPELINE_TEST_CMD"),
 
-		EngineClarify: envText("PIPELINE_ENGINE_CLARIFY", "claude"),
+		EngineClarify: envText("PIPELINE_ENGINE_CLARIFY", "cursor"),
 		EngineCode:    envText("PIPELINE_ENGINE_CODE", "cursor"),
 		EngineReview:  envText("PIPELINE_ENGINE_REVIEW", "gemini"),
 
@@ -130,11 +135,15 @@ func loadConfig() *Config {
 		PollInterval:     envInt("PIPELINE_POLL_INTERVAL", 900),
 		MaxConcurrency:   envInt("PIPELINE_MAX_CONCURRENCY", 2),
 		AgentRetries:     envInt("PIPELINE_AGENT_RETRIES", 2),
+		AgentRunsKeep:    envInt("PIPELINE_AGENT_RUNS_KEEP", 200),
 
 		SetupGate:    envBool("PIPELINE_SETUP_GATE", true),
 		GateRelative: envBool("PIPELINE_GATE_RELATIVE", true),
 		PushEnabled:  envBool("PIPELINE_PUSH_ENABLED", false),
 		PREnabled:    envBool("PIPELINE_PR_ENABLED", false),
+		// inline 默认：多需求合批成一次 agent 调用，跳过自动测试门，开发完停在「待合并」由人决定 Review。
+		BatchDevelop:   envBool("PIPELINE_BATCH_DEVELOP", true),
+		InlineSkipGate: envBool("PIPELINE_INLINE_SKIP_GATE", true),
 
 		Root: root,
 	}

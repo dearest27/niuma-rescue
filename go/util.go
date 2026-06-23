@@ -103,6 +103,26 @@ func tail(s string, n int) string {
 	return string(r[len(r)-n:])
 }
 
+// toStrList 把任意 JSON 值归一成字符串切片（飞书表单多选返回 []any{string}）。
+func toStrList(v any) []string {
+	var out []string
+	switch t := v.(type) {
+	case []any:
+		for _, x := range t {
+			if s := strings.TrimSpace(fmt.Sprintf("%v", x)); s != "" {
+				out = append(out, s)
+			}
+		}
+	case []string:
+		out = t
+	case string:
+		if s := strings.TrimSpace(t); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func firstLineToken(s string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {

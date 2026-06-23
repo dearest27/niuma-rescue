@@ -8,14 +8,14 @@ import (
 
 var templateStatus = map[string]string{
 	SSetup: "turquoise", SClarify: "wathet", SAnswer: "yellow", SConfirm: "blue",
-	SDev: "purple", SReview: "indigo", SMerge: "green", SDone: "green", SBlocked: "red",
+	SDevReady: "orange", SDev: "purple", SReview: "indigo", SMerge: "green", SDone: "green", SBlocked: "red",
 }
 var statusEmoji = map[string]string{
 	SSetup: "🎛", SClarify: "🔍", SAnswer: "💬", SConfirm: "📋",
-	SDev: "🔧", SReview: "🔎", SMerge: "🚀", SDone: "✔️", SBlocked: "🚫",
+	SDevReady: "📦", SDev: "🔧", SReview: "🔎", SMerge: "🚀", SDone: "✔️", SBlocked: "🚫",
 }
 var boardOrder = map[string]int{
-	SBlocked: 0, SSetup: 1, SConfirm: 2, SMerge: 3, SAnswer: 4, SClarify: 5, SDev: 6, SReview: 7,
+	SBlocked: 0, SSetup: 1, SConfirm: 2, SDevReady: 3, SMerge: 4, SAnswer: 5, SClarify: 6, SDev: 7, SReview: 8,
 }
 var agentChoices = []string{"claude", "codex", "gemini", "cursor"}
 
@@ -177,6 +177,102 @@ func mergeCard(r *Record) map[string]any {
 		md("**Review 已通过**\n\nPR / MR / 分支：\n"+linkText(fieldText(r.Fields[FLink]))),
 		md("合并或确认提交后，点击下面按钮收尾。"),
 		actionRow(button("已合并 / 完成", "done", rid, "primary", nil)))
+}
+
+// devQueueCard：待开发批次队列卡。列出某工作区排队中的需求，一个按钮整批开发。
+func devQueueCard(recs []*Record, wsKey string) map[string]any {
+	wsLabel := orDefault(wsKey, "默认")
+	var lines []string
+	for i, r := range recs {
+		lines = append(lines, fmt.Sprintf("%d. %s", i+1, recTitle(r)))
+	}
+	body := "排队中的需求会**一起**开发（合批一次执行）。攒够了点下面按钮开跑：\n\n" + strings.Join(lines, "\n")
+	btn := button(fmt.Sprintf("🚀 开始开发本批（%d）", len(recs)), "start_dev_batch", "", "primary",
+		map[string]any{"workspace": wsKey})
+	return card(cardHeader(fmt.Sprintf("📦 待开发批次 · %s（%d）", wsLabel, len(recs)), SDevReady, ""),
+		md(body),
+		md("_未选进来的需求不受影响；新确认的需求会继续排进这个队列。_"),
+		actionRow(btn))
+}
+
+// reviewDecisionCard：inline 开发完成后的人工决策卡——做 Review 还是直接完成。
+func reviewDecisionCard(r *Record, changedCount int) map[string]any {
+	rid := r.RecordID
+	ws := orDefault(fieldText(r.Fields[FWorkspace]), "默认")
+	agent := orDefault(fieldText(r.Fields[FAgentReview]), orDefault(fieldText(r.Fields[FAgent]), "默认"))
+	return card(cardHeader("待决策："+fieldText(r.Fields[FTitle]), SMerge, "green"),
+		fieldsBlock([2]string{"状态", SMerge}, [2]string{"工作区", ws}, [2]string{"Review Agent", agent}),
+		md(fmt.Sprintf("**开发已完成**，改动留在工作区（共 %d 个文件，未提交）。", changedCount)),
+		md("你可以让 Reviewer 先审一遍，或直接标记完成由你自己把关。"),
+		actionRow(button("🔍 做 Review", "do_review", rid, "primary", nil),
+			button("标记完成", "done", rid, "default", nil)))
+}
+
+// backlogCard：待处理需求池（飞书卡片 2.0）——多选勾选 + 一次确认开始。
+// 选中的需求一起进入澄清，后续开发阶段自动合批。
+func backlogCard(recs []*Record) map[string]any {
+	var options []any
+	for _, r := range recs {
+		options = append(options, map[string]any{
+			"text":  map[string]any{"tag": "plain_text", "content": trunc(recTitle(r), 60)},
+			"value": r.RecordID,
+		})
+	}
+	form := map[string]any{
+		"tag": "form", "name": "backlog",
+		"elements": []any{
+			map[string]any{
+				"tag": "multi_select_static", "name": "picked",
+				"placeholder": map[string]any{"tag": "plain_text", "content": "勾选要开始的需求…"},
+				"options":     options,
+			},
+			map[string]any{
+				"tag": "button", "name": "go", "action_type": "form_submit",
+				"text":  map[string]any{"tag": "plain_text", "content": "✅ 确认开始"},
+				"type":  "primary",
+				"value": map[string]any{"action": "confirm_backlog"},
+			},
+		},
+	}
+	return map[string]any{
+		"schema": "2.0",
+		"config": map[string]any{"update_multi": true, "wide_screen_mode": true},
+		"header": map[string]any{
+			"title":    map[string]any{"tag": "plain_text", "content": fmt.Sprintf("📥 待处理需求池（%d）", len(recs))},
+			"template": "turquoise",
+		},
+		"body": map[string]any{"elements": []any{
+			md2("勾选你想现在开始处理的需求，点「✅ 确认开始」。选中的会一起进入澄清流程，开发阶段自动合批成一次执行。未选的留在池子里，下次发新需求会重新列出。"),
+			form,
+		}},
+	}
+}
+
+func backlogText(recs []*Record) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("📥 待处理需求池（%d）——回复『开始澄清』开始最新一条，或在多维表格里改状态：\n", len(recs)))
+	for i, r := range recs {
+		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, recTitle(r)))
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// md2 是卡片 2.0 的 markdown 文本元素。
+func md2(content string) map[string]any {
+	return map[string]any{"tag": "markdown", "content": content}
+}
+
+// card2Note：简单的 2.0 提示卡，用于替换已提交的池子卡。
+func card2Note(title, note, template string) map[string]any {
+	if template == "" {
+		template = "green"
+	}
+	return map[string]any{
+		"schema": "2.0",
+		"config": map[string]any{"update_multi": true},
+		"header": map[string]any{"title": map[string]any{"tag": "plain_text", "content": trunc(title, 80)}, "template": template},
+		"body":   map[string]any{"elements": []any{md2(note)}},
+	}
 }
 
 func doneToastCard(title, note, template string) map[string]any {

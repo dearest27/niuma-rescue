@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -386,5 +387,36 @@ func writeAgentArtifacts(dir, engine, cwd string, argv []string, rc int, duratio
 	}
 	if b, err := json.MarshalIndent(meta, "", "  "); err == nil {
 		_ = os.WriteFile(filepath.Join(dir, "meta.json"), b, 0o644)
+	}
+	pruneAgentRuns()
+}
+
+// pruneAgentRuns 保留 state/agent-runs/ 下最新 N 个 run（按目录名时间戳排序），删除更旧的。
+// N = PIPELINE_AGENT_RUNS_KEEP（默认 200）；≤0 表示不清理。
+func pruneAgentRuns() {
+	keep := 200
+	if cfg != nil {
+		keep = cfg.AgentRunsKeep
+	}
+	if keep <= 0 {
+		return
+	}
+	base := filepath.Join(stateDir(), "agent-runs")
+	ents, err := os.ReadDir(base)
+	if err != nil {
+		return
+	}
+	var dirs []string
+	for _, e := range ents {
+		if e.IsDir() {
+			dirs = append(dirs, e.Name())
+		}
+	}
+	if len(dirs) <= keep {
+		return
+	}
+	sort.Strings(dirs) // 名字以 yyyymmdd-hhmmss 前缀，字典序即时间序
+	for _, name := range dirs[:len(dirs)-keep] {
+		_ = os.RemoveAll(filepath.Join(base, name))
 	}
 }

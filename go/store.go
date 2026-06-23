@@ -75,15 +75,13 @@ func (s *Store) claim(recordID, stage, status, title string) Claim {
 	now := nowf()
 	staleBefore := now - float64(cfg.StaleAfter)
 	host, _ := os.Hostname()
-	if _, err := s.db.Exec("BEGIN IMMEDIATE"); err != nil {
+	// 用真正的事务把连接钉住：SELECT + INSERT 原子化。配合 SetMaxOpenConns(1)，
+	// 并发 claim 会排队等连接而不是撞 SQLITE_BUSY。
+	tx, err := s.db.Begin()
+	if err != nil {
 		return Claim{Reason: "db_error"}
 	}
-	done := false
-	defer func() {
-		if !done {
-			s.db.Exec("ROLLBACK")
-		}
-	}()
+	defer tx.Rollback() // Commit 之后是 no-op
 
 	var (
 		st, stg, sts string
@@ -91,9 +89,9 @@ func (s *Store) claim(recordID, stage, status, title string) Claim {
 		hb           float64
 		nextRetry    sql.NullFloat64
 	)
-	err := s.db.QueryRow(`SELECT state,stage,status,attempts,heartbeat_at,next_retry_at FROM record_runs WHERE record_id=?`,
+	qerr := tx.QueryRow(`SELECT state,stage,status,attempts,heartbeat_at,next_retry_at FROM record_runs WHERE record_id=?`,
 		recordID).Scan(&st, &stg, &sts, &attempts, &hb, &nextRetry)
-	if err == nil { // 已有行
+	if qerr == nil { // 已有行
 		if st == "processing" && hb >= staleBefore {
 			return Claim{Reason: "busy", Attempts: attempts}
 		}
@@ -105,7 +103,7 @@ func (s *Store) claim(recordID, stage, status, title string) Claim {
 		attempts = 1
 	}
 	runID := fmt.Sprintf("%s-%s-%d-%d", recordID, stage, int64(now), time.Now().UnixNano()%1e8)
-	_, e := s.db.Exec(`INSERT INTO record_runs
+	_, e := tx.Exec(`INSERT INTO record_runs
 		(record_id,stage,status,state,run_id,owner_pid,owner_host,title,attempts,last_error,next_retry_at,claimed_at,heartbeat_at,updated_at)
 		VALUES (?,?,?,'processing',?,?,?,?,?,NULL,NULL,?,?,?)
 		ON CONFLICT(record_id) DO UPDATE SET
@@ -117,10 +115,9 @@ func (s *Store) claim(recordID, stage, status, title string) Claim {
 	if e != nil {
 		return Claim{Reason: "db_error"}
 	}
-	if _, e := s.db.Exec("COMMIT"); e != nil {
+	if e := tx.Commit(); e != nil {
 		return Claim{Reason: "db_error"}
 	}
-	done = true
 	s.event(runID, recordID, stage, "claimed", status, "", title)
 	return Claim{OK: true, RunID: runID, Attempts: attempts}
 }
