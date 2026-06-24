@@ -67,7 +67,7 @@ var AgentCmds = map[string][]string{
 	"claude": {"claude", "-p", "--output-format", "text"},
 	"codex":  {"codex", "exec", "-"},
 	"gemini": {"gemini", "--skip-trust", "--approval-mode", "yolo", "-p", " "},
-	"cursor": {"cursor-agent", "--print", "--force", "--trust", "--model", "composer-2.5", "--output-format", "text"},
+	"cursor": {"cursor-agent", "--print", "--force", "--trust", "--model", "auto", "--output-format", "text"},
 }
 
 // 中文/大小写/别名 → AGENT_CMDS 的 key。
@@ -99,7 +99,7 @@ type Config struct {
 	FailureLimit, PollInterval, MaxConcurrency          int
 	AgentRetries, AgentRunsKeep                         int
 	SetupGate, GateRelative, PushEnabled, PREnabled     bool
-	BatchDevelop, InlineSkipGate                        bool
+	BatchDevelop, BatchClarify, InlineSkipGate          bool
 
 	Root, StateDir, WorktreeBase, WorkspacesFile string
 }
@@ -143,6 +143,7 @@ func loadConfig() *Config {
 		PREnabled:    envBool("PIPELINE_PR_ENABLED", false),
 		// inline 默认：多需求合批成一次 agent 调用，跳过自动测试门，开发完停在「待合并」由人决定 Review。
 		BatchDevelop:   envBool("PIPELINE_BATCH_DEVELOP", true),
+		BatchClarify:   envBool("PIPELINE_BATCH_CLARIFY", true),
 		InlineSkipGate: envBool("PIPELINE_INLINE_SKIP_GATE", true),
 
 		Root: root,

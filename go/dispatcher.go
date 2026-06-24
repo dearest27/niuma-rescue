@@ -147,10 +147,20 @@ func (a *App) makeProgress(chatID, title, stage, engine, runID string) func(map[
 
 // ── 阶段处理器 ────────────────────────────────────────────────────────
 func (a *App) handleClarify(rec *Record, runID string) {
-	f := rec.Fields
 	ws := a.workspaceFor(rec)
+	if ws.inline() && cfg.BatchClarify {
+		a.handleClarifyInlineBatch(rec, ws, runID)
+		return
+	}
+	a.clarifyOne(rec, ws, runID)
+}
+
+// clarifyOne：单条澄清（worktree 模式或关闭合批时）。
+func (a *App) clarifyOne(rec *Record, ws Workspace, runID string) {
+	f := rec.Fields
 	chat := fieldText(f[FChat])
 	engine := a.resolveAgent(rec, "clarify", cfg.EngineClarify)
+	a.noteAgent(rec, "clarify", engine)
 	prompt := buildPrompt("clarify", map[string]string{"requirement": fieldText(f[FDesc]), "clarifications": fieldText(f[FClarify])})
 	a.fs.notify(chat, "🤔 正在澄清需求（"+engine+" · "+ws.Key+"）…")
 	prog := a.makeProgress(chat, recTitle(rec), "澄清", engine, runID)
@@ -159,14 +169,137 @@ func (a *App) handleClarify(rec *Record, runID string) {
 		a.onFailure(rec, "clarify("+engine+") 调用失败: "+trunc(res.Output, 300), "")
 		return
 	}
-	verdict, rest := routeClarify(res.Output)
+	a.applyClarifyVerdict(rec, engine, res.Output)
+}
+
+// applyClarifyVerdict：把一条澄清的产出路由到「待确认」或「待回答」。
+func (a *App) applyClarifyVerdict(rec *Record, engine, output string) {
+	chat := fieldText(rec.Fields[FChat])
+	verdict, rest := routeClarify(output)
 	if verdict == "CLEAR" {
 		a.advance(rec, SConfirm, "[clarify:"+engine+"] 信息充分，PRD 已生成，待人确认", map[string]any{FPRD: rest})
 		a.fs.notifyCard(chat, confirmCard(rec))
 	} else {
-		merged := strings.TrimSpace(fieldText(f[FClarify]) + "\n\n" + strings.TrimSpace(res.Output))
+		merged := strings.TrimSpace(fieldText(rec.Fields[FClarify]) + "\n\n" + strings.TrimSpace(output))
 		a.advance(rec, SAnswer, "[clarify:"+engine+"] 产出澄清问题，待人回答", map[string]any{FClarify: merged})
-		a.fs.notify(chat, "🤔 关于这个需求我有几个问题，直接回复我即可：\n\n"+strings.TrimSpace(res.Output))
+		a.fs.notify(chat, "🤔 关于「"+recTitle(rec)+"」我有几个问题，直接回复我即可：\n\n"+strings.TrimSpace(output))
+	}
+}
+
+// handleClarifyInlineBatch：同工作区的「待澄清」需求合批，一次 agent 调用逐条产出，再按 @@@REQ:<id> 切分路由。
+// 调用方已持有该工作区的锁。
+func (a *App) handleClarifyInlineBatch(rec *Record, ws Workspace, runID string) {
+	batch := a.collectClarifyBatch(rec, ws)
+	if len(batch) == 0 {
+		batch = []*Record{rec}
+	}
+	engine := a.resolveAgent(rec, "clarify", cfg.EngineClarify)
+	chat := fieldText(rec.Fields[FChat])
+	for _, r := range batch {
+		a.noteAgent(r, "clarify", engine)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("你是需求澄清专家。下面是同一工作区的多条需求，逐条判断信息是否够清楚能直接开干。\n\n")
+	sb.WriteString("# 输出格式（务必严格：系统按 `@@@REQ:<id>` 行切分逐条处理，别的内容一律不要）\n")
+	sb.WriteString("对每条需求，先单独输出一行 `@@@REQ:<原样id>`，紧接着：\n")
+	sb.WriteString("- 信息够了：下一行 `CLEAR`，再跟一份简短 PRD（## 目标 / ## 范围 / ## 验收标准 / ## 预计改动模块）。\n")
+	sb.WriteString("- 还有阻塞性疑问：下一行 `QUESTIONS`，再跟**最多 3 个**问题，一句一个、说人话、别注水。\n")
+	sb.WriteString("不要开场白、不要总结、不要把多条混在一起。\n\n")
+	sb.WriteString("# 需求列表\n")
+	for _, r := range batch {
+		sb.WriteString("@@@REQ:" + r.RecordID + "\n")
+		sb.WriteString("标题：" + recTitle(r) + "\n")
+		sb.WriteString("需求原文：" + fieldText(r.Fields[FDesc]) + "\n")
+		if c := strings.TrimSpace(fieldText(r.Fields[FClarify])); c != "" {
+			sb.WriteString("已有澄清问答：" + c + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	titles := make([]string, len(batch))
+	for i, r := range batch {
+		titles[i] = recTitle(r)
+	}
+	a.fs.notify(chat, fmt.Sprintf("🤔 正在澄清本批 %d 个需求（%s · %s）：%s…", len(batch), engine, ws.Key, strings.Join(titles, " / ")))
+	emit("dispatcher", "batch_clarify_start", map[string]any{"workspace": ws.Key, "count": len(batch), "engine": engine})
+
+	prog := a.makeProgress(chat, fmt.Sprintf("澄清×%d", len(batch)), "澄清", engine, runID)
+	res := runAgent(engine, sb.String(), ws.Path, cfg.TimeoutClarify, agentLog, prog)
+	if !res.OK {
+		for _, r := range batch {
+			a.onFailure(r, "clarify("+engine+") 合批调用失败: "+trunc(res.Output, 300), "")
+		}
+		return
+	}
+
+	blocks := parseClarifyBatch(res.Output)
+	for _, r := range batch {
+		out, ok := blocks[r.RecordID]
+		if !ok || strings.TrimSpace(out) == "" {
+			a.onFailure(r, "合批澄清输出里没找到本需求的块（agent 未按 @@@REQ 格式输出）", "")
+			continue
+		}
+		a.applyClarifyVerdict(r, engine, out)
+	}
+}
+
+// collectClarifyBatch 收集与 rec 同工作区、状态为「待澄清」的所有需求（含 rec）。
+func (a *App) collectClarifyBatch(rec *Record, ws Workspace) []*Record {
+	records, err := a.fs.listRecords()
+	if err != nil {
+		return []*Record{rec}
+	}
+	var batch []*Record
+	seen := map[string]bool{rec.RecordID: true}
+	batch = append(batch, rec)
+	for i := range records {
+		r := &records[i]
+		if seen[r.RecordID] || fieldText(r.Fields[FStatus]) != SClarify {
+			continue
+		}
+		if a.workspaceFor(r).Key == ws.Key {
+			seen[r.RecordID] = true
+			batch = append(batch, r)
+		}
+	}
+	return batch
+}
+
+// parseClarifyBatch 按 `@@@REQ:<id>` 行把合批澄清输出切成 record_id -> 块内容。
+func parseClarifyBatch(output string) map[string]string {
+	res := map[string]string{}
+	var curID string
+	var buf []string
+	flush := func() {
+		if curID != "" {
+			res[curID] = strings.TrimSpace(strings.Join(buf, "\n"))
+		}
+		buf = nil
+	}
+	for _, ln := range strings.Split(output, "\n") {
+		t := strings.TrimSpace(ln)
+		if strings.HasPrefix(t, "@@@REQ:") {
+			flush()
+			curID = strings.TrimSpace(strings.TrimPrefix(t, "@@@REQ:"))
+			continue
+		}
+		if curID != "" {
+			buf = append(buf, ln)
+		}
+	}
+	flush()
+	return res
+}
+
+// noteAgent 把实际用到的 agent 回写到阶段字段（仅当字段原本为空），方便在飞书表格里看到。
+func (a *App) noteAgent(rec *Record, stage, engine string) {
+	field := map[string]string{"clarify": FAgentClarify, "code": FAgentCode, "review": FAgentReview}[stage]
+	if field == "" || fieldText(rec.Fields[field]) != "" {
+		return
+	}
+	if err := a.fs.updateRecord(rec.RecordID, map[string]any{field: engine}); err == nil {
+		rec.Fields[field] = engine
 	}
 }
 
@@ -188,6 +321,7 @@ func (a *App) handleDevelop(rec *Record, runID string) {
 	}
 	a.writeDossier(wt, rid, f)
 	engine := a.resolveAgent(rec, "code", cfg.EngineCode)
+	a.noteAgent(rec, "code", engine)
 	changed := productChangedFiles(changedFiles(ws, wt))
 	if len(changed) == 0 {
 		a.fs.notify(chat, "🔧 开始开发（"+engine+"）：写代码 + 跑测试，可能需要几分钟，请稍候…")
@@ -237,6 +371,9 @@ func (a *App) handleDevelopInline(rec *Record, ws Workspace, runID string) {
 	}
 	engine := a.resolveAgent(rec, "code", cfg.EngineCode)
 	chat := fieldText(rec.Fields[FChat])
+	for _, r := range batch {
+		a.noteAgent(r, "code", engine)
+	}
 
 	// 写每条需求的档案 + 拼合批 prompt
 	var sb strings.Builder
@@ -342,6 +479,7 @@ func (a *App) handleReview(rec *Record, runID string) {
 		return
 	}
 	engine := a.resolveAgent(rec, "review", cfg.EngineReview)
+	a.noteAgent(rec, "review", engine)
 	prompt := buildPrompt("review", map[string]string{"dossier": a.dossierDir(wt, rid), "diff": diffText(ws, wt)})
 	a.fs.notify(chat, "🔍 开始 Review（"+engine+"）：审查改动中…")
 	prog := a.makeProgress(chat, recTitle(rec), "Review", engine, runID)
@@ -477,12 +615,15 @@ func (a *App) runStage(status string, rec *Record, runID string) (err error) {
 }
 
 func (a *App) processChain(rec *Record) {
-	// inline 工作区共享同一棵工作树：只有会改/读树的阶段（开发 / Review）才需要按工作区独占；
-	// 澄清只读需求文字、不碰树，放开并行（并发上限 = PIPELINE_MAX_CONCURRENCY）。
-	if ws := a.workspaceFor(rec); ws.inline() && fieldText(rec.Fields[FStatus]) != SClarify {
+	// inline 工作区共享同一棵工作树：开发/Review 必须按工作区独占。
+	// 澄清若开了合批（BatchClarify），也按工作区独占——一次 agent 处理该工作区所有待澄清；
+	// 没开合批则澄清只读、放开并行。
+	status := fieldText(rec.Fields[FStatus])
+	needLock := status != SClarify || cfg.BatchClarify
+	if ws := a.workspaceFor(rec); ws.inline() && needLock {
 		lk := a.wsLock(ws.Key)
 		if !lk.TryLock() {
-			logf("跳过「%s」· 工作区 %s 正被占用（inline 开发/Review 串行）", recTitle(rec), ws.Key)
+			logf("跳过「%s」· 工作区 %s 正被占用（inline 串行）", recTitle(rec), ws.Key)
 			return
 		}
 		defer lk.Unlock()

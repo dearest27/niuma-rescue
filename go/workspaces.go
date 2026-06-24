@@ -5,6 +5,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 type Workspace struct {
@@ -38,17 +39,21 @@ type wsItem struct {
 	PREnabled    bool   `json:"pr_enabled"`
 }
 
-var wsCache *wsFile
+var (
+	wsCache *wsFile
+	wsOnce  sync.Once
+)
 
+// loadWorkspaces 只完整初始化一次（sync.Once）：避免并发首调时读到半填充的缓存，
+// 否则不同 goroutine 解析出的工作区/锁 key 会不一致，按工作区的串行锁形同虚设。
 func loadWorkspaces() *wsFile {
-	if wsCache != nil {
-		return wsCache
-	}
-	wsCache = &wsFile{Items: map[string]wsItem{}}
-	b, err := os.ReadFile(cfg.WorkspacesFile)
-	if err == nil {
-		json.Unmarshal(b, wsCache)
-	}
+	wsOnce.Do(func() {
+		c := &wsFile{Items: map[string]wsItem{}}
+		if b, err := os.ReadFile(cfg.WorkspacesFile); err == nil {
+			json.Unmarshal(b, c)
+		}
+		wsCache = c
+	})
 	return wsCache
 }
 
