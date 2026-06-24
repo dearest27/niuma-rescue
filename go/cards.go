@@ -218,6 +218,16 @@ func backlogCard(recs []*Record) map[string]any {
 			"value": r.RecordID,
 		})
 	}
+	// 工作区下拉：首项「不改」表示保持现状/用默认
+	wsOpts := []any{selOpt("（不改 / 用默认）", "")}
+	for _, k := range workspaceKeys() {
+		wsOpts = append(wsOpts, selOpt(k, k))
+	}
+	// Agent 下拉：首项「默认」表示不写字段、走配置默认
+	agOpts := []any{selOpt("（默认）", "")}
+	for _, a := range agentChoices {
+		agOpts = append(agOpts, selOpt(a, a))
+	}
 	form := map[string]any{
 		"tag": "form", "name": "backlog",
 		"elements": []any{
@@ -225,6 +235,16 @@ func backlogCard(recs []*Record) map[string]any {
 				"tag": "multi_select_static", "name": "picked",
 				"placeholder": map[string]any{"tag": "plain_text", "content": "勾选要开始的需求…"},
 				"options":     options,
+			},
+			map[string]any{
+				"tag": "select_static", "name": "workspace",
+				"placeholder": map[string]any{"tag": "plain_text", "content": "工作区（去哪个仓库处理）"},
+				"options":     wsOpts,
+			},
+			map[string]any{
+				"tag": "select_static", "name": "agent",
+				"placeholder": map[string]any{"tag": "plain_text", "content": "Agent（留空用默认 cursor）"},
+				"options":     agOpts,
 			},
 			map[string]any{
 				"tag": "button", "name": "go", "action_type": "form_submit",
@@ -260,6 +280,11 @@ func backlogText(recs []*Record) string {
 // md2 是卡片 2.0 的 markdown 文本元素。
 func md2(content string) map[string]any {
 	return map[string]any{"tag": "markdown", "content": content}
+}
+
+// selOpt 构造 select_static / multi_select_static 的一个选项。
+func selOpt(text, value string) map[string]any {
+	return map[string]any{"text": map[string]any{"tag": "plain_text", "content": text}, "value": value}
 }
 
 // card2Note：简单的 2.0 提示卡，用于替换已提交的池子卡。

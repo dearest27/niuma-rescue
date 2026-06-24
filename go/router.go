@@ -366,6 +366,19 @@ func (a *App) confirmBacklog(value map[string]any, records []Record) (string, bo
 	if len(picked) == 0 {
 		return "没有勾选任何需求", false, nil
 	}
+	// 可选：把表单里选的工作区 / Agent 一并写到选中的需求上
+	wsKey := fieldText(fv["workspace"])
+	if wsKey != "" {
+		if _, err := workspaceGet(wsKey); err != nil {
+			return "工作区 `" + wsKey + "` 无效：" + err.Error(), false, nil
+		}
+	}
+	agent := ""
+	if a := normalizeAgent(fieldText(fv["agent"])); a != "" {
+		if _, ok := AgentCmds[a]; ok {
+			agent = a
+		}
+	}
 	n := 0
 	var titles []string
 	for _, id := range picked {
@@ -373,7 +386,14 @@ func (a *App) confirmBacklog(value map[string]any, records []Record) (string, bo
 		if r == nil || fieldText(r.Fields[FStatus]) != SSetup {
 			continue
 		}
-		if err := a.fs.updateRecord(id, map[string]any{FStatus: SClarify}); err == nil {
+		fields := map[string]any{FStatus: SClarify}
+		if wsKey != "" {
+			fields[FWorkspace] = wsKey
+		}
+		if agent != "" {
+			fields[FAgent] = agent
+		}
+		if err := a.fs.updateRecord(id, fields); err == nil {
 			n++
 			titles = append(titles, recTitle(r))
 		}
@@ -381,7 +401,14 @@ func (a *App) confirmBacklog(value map[string]any, records []Record) (string, bo
 	if n == 0 {
 		return "勾选的需求都不在「待选择」状态了", false, nil
 	}
-	note := "已进入澄清流程，完成后会同步进度。未选的仍留在需求池。\n\n本批：" + strings.Join(titles, " / ")
+	extra := ""
+	if wsKey != "" {
+		extra += " · 工作区=" + wsKey
+	}
+	if agent != "" {
+		extra += " · Agent=" + agent
+	}
+	note := "已进入澄清流程" + extra + "，完成后会同步进度。未选的仍留在需求池。\n\n本批：" + strings.Join(titles, " / ")
 	return "🚀 已开始 " + itoa(n) + " 个需求", true, card2Note("🚀 已开始 "+itoa(n)+" 个需求", note, "green")
 }
 
